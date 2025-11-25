@@ -1,0 +1,24 @@
+using Services;
+
+namespace Extensions;
+
+public static class ServiceCollectionExtensions
+{
+    public static IServiceCollection AddMigrationServices(this IServiceCollection services)
+    {
+        // Register migration services
+        services.AddScoped<UOMMasterMigration>();
+        services.AddScoped<PlantMasterMigration>();
+        services.AddScoped<CurrencyMasterMigration>();
+        services.AddScoped<MaterialGroupMasterMigration>();
+        services.AddScoped<PurchaseGroupMasterMigration>();
+        services.AddScoped<PaymentTermMasterMigration>();
+        services.AddScoped<MaterialMasterMigration>();
+        services.AddScoped<EventMasterMigration>();
+        services.AddScoped<TaxMasterMigration>();
+        services.AddScoped<UsersMasterMigration>();
+        services.AddScoped<ErpPrLinesMigration>();
+
+        return services;
+    }
+}
