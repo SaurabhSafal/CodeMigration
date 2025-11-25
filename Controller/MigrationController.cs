@@ -17,6 +17,7 @@ public class MigrationController : Controller
     private readonly UsersMasterMigration _usersmasterMigration;
     private readonly ErpPrLinesMigration _erpprlinesMigration;
     private readonly ARCMainMigration _arcMainMigration;
+    private readonly TaxCodeMasterMigration _taxCodeMasterMigration;
 
 
     public MigrationController(
@@ -31,7 +32,8 @@ public class MigrationController : Controller
         TaxMasterMigration taxMigration,
         UsersMasterMigration usersmasterMigration,
         ErpPrLinesMigration erpprlinesMigration,
-        ARCMainMigration arcMainMigration)
+        ARCMainMigration arcMainMigration,
+        TaxCodeMasterMigration taxCodeMasterMigration)
     {
         _uomMigration = uomMigration;
         _plantMigration = plantMigration;
@@ -45,6 +47,7 @@ public class MigrationController : Controller
         _usersmasterMigration = usersmasterMigration;
         _erpprlinesMigration = erpprlinesMigration;
         _arcMainMigration = arcMainMigration;
+        _taxCodeMasterMigration = taxCodeMasterMigration;
     }
 
     public IActionResult Index()
@@ -70,6 +73,7 @@ public class MigrationController : Controller
             new { name = "users", description = "TBL_USERMASTERFINAL to users" },
             new { name = "erpprlines", description = "TBL_PRTRANSACTION to erp_pr_lines" },
             new { name = "arcmain", description = "TBL_ARCMain to arc_header" },
+            new { name = "taxcodemaster", description = "TBL_TAXCODEMASTER to tax_code_master" },
         };
         return Json(tables);
     }
@@ -135,6 +139,11 @@ public class MigrationController : Controller
         else if (table.ToLower() == "arcmain")
         {
             var mappings = _arcMainMigration.GetMappings();
+            return Json(mappings);
+        }
+        else if (table.ToLower() == "taxcodemaster")
+        {
+            var mappings = _taxCodeMasterMigration.GetMappings();
             return Json(mappings);
         }
         return Json(new List<object>());
@@ -212,6 +221,10 @@ public class MigrationController : Controller
             else if (request.Table.ToLower() == "arcmain")
             {
                 recordCount = await _arcMainMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "taxcodemaster")
+            {
+                recordCount = await _taxCodeMasterMigration.MigrateAsync();
             }
             else
             {
