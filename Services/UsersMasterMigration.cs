@@ -99,7 +99,7 @@ public class UsersMasterMigration : MigrationService
         int insertedCount = 0;
         while (await reader.ReadAsync())
         {
-            var (passwordHash, passwordSalt) = DataMigration.Helper.PasswordEncryptionHelper.EncryptPassword(reader["USERPASSWORD"].ToString());
+            var (passwordHash, passwordSalt) = DataMigration.Helper.PasswordEncryptionHelper.EncryptPassword(reader["USERPASSWORD"]?.ToString() ?? string.Empty);
             
             // Encrypt email and mobile number
             var emailAddress = reader["EMAIL_ADDRESS"].ToString() ?? string.Empty;

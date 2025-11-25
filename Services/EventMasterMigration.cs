@@ -149,7 +149,8 @@ public class EventMasterMigration : MigrationService
             // First, get total count for progress tracking
             using (var countCmd = new SqlCommand("SELECT COUNT(*) FROM TBL_EVENTMASTER", sqlConnection))
             {
-                totalRecords = (int)await countCmd.ExecuteScalarAsync();
+                var scalarResult = await countCmd.ExecuteScalarAsync();
+                totalRecords = scalarResult != null && scalarResult != DBNull.Value ? Convert.ToInt32(scalarResult) : 0;
                 _logger.LogInformation($"Total records to migrate: {totalRecords}");
             }
 
@@ -174,7 +175,8 @@ public class EventMasterMigration : MigrationService
                         using (var checkCmd = new NpgsqlCommand("SELECT COUNT(*) FROM event_master WHERE event_id = @event_id", pgConnection, transaction))
                         {
                             checkCmd.Parameters.AddWithValue("@event_id", eventId);
-                            var count = (long)await checkCmd.ExecuteScalarAsync();
+                            var scalarResult = await checkCmd.ExecuteScalarAsync();
+                            var count = scalarResult != null && scalarResult != DBNull.Value ? Convert.ToInt64(scalarResult) : 0;
                             recordExists = count > 0;
                         }
 
@@ -214,7 +216,7 @@ public class EventMasterMigration : MigrationService
                                     }
                                     else
                                     {
-                                        eventType = reader["EVENTTYPE"].ToString();
+                                        eventType = reader["EVENTTYPE"]?.ToString() ?? string.Empty;
                                     }
                                 }
                                 insertCmd.Parameters.AddWithValue("@event_type", string.IsNullOrEmpty(eventType) ? DBNull.Value : eventType);

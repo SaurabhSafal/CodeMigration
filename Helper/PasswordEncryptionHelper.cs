@@ -44,12 +44,14 @@ namespace DataMigration.Helper
             salt = passwordSalt;
         }
 
-        public async static Task<bool> VerifyPassword(string password, string storedHash, string storedSalt)
+        public static async Task<bool> VerifyPassword(string password, string storedHash, string storedSalt)
         {
             if (string.IsNullOrEmpty(password) || string.IsNullOrEmpty(storedHash) || string.IsNullOrEmpty(storedSalt))
-                return false;
+            return false;
 
             try
+            {
+            return await Task.Run(() =>
             {
                 byte[] saltBytes = Convert.FromBase64String(storedSalt);
                 byte[] storedHashBytes = Convert.FromBase64String(storedHash);
@@ -60,11 +62,12 @@ namespace DataMigration.Helper
 
                 // Compare byte-by-byte in constant time to prevent timing attacks
                 return CryptographicOperations.FixedTimeEquals(testHashBytes, storedHashBytes);
+            });
             }
             catch (Exception)
             {
-                // If there's any error (like invalid base64 strings), return false
-                return false;
+            // If there's any error (like invalid base64 strings), return false
+            return false;
             }
         }
 
