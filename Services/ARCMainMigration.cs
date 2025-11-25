@@ -24,14 +24,10 @@ public class ARCMainMigration : MigrationService
             Status,
             VendorId,
             TotalARCValue,
-            QuantityLimitation,
             ValueTolerance,
-            QuantityTolerance,
+            QuantityLimitation,
             ClientSAPId,
             EventId,
-            SummaryNote,
-            ClosingNegotiationNote,
-            HeaderNote,
             UsedTotalValue,
             ARCTerms,
             CreatedBy,
@@ -56,15 +52,12 @@ public class ARCMainMigration : MigrationService
             supplier_id,
             total_arc_value,
             arc_type,
-            value_tolerance_percentage,
-            quantity_tolerance_percentage,
+            tolerance_percentage,
             company_id,
             event_id,
-            summary_note,
-            closing_negotiation_note,
-            header_note,
             used_total_value,
             arc_terms,
+            currency_id,
             created_by, 
             created_date, 
             modified_by, 
@@ -87,15 +80,12 @@ public class ARCMainMigration : MigrationService
             @supplier_id,
             @total_arc_value,
             @arc_type,
-            @value_tolerance_percentage,
-            @quantity_tolerance_percentage,
+            @tolerance_percentage,
             @company_id,
             @event_id,
-            @summary_note,
-            @closing_negotiation_note,
-            @header_note,
             @used_total_value,
             @arc_terms,
+            @currency_id,
             @created_by, 
             @created_date, 
             @modified_by, 
@@ -125,35 +115,56 @@ public class ARCMainMigration : MigrationService
             "Direct", // supplier_id
             "Direct", // total_arc_value
             "Direct", // arc_type
-            "Direct", // value_tolerance_percentage
-            "Direct", // quantity_tolerance_percentage
+            "Direct", // tolerance_percentage
             "Direct", // company_id
             "Direct", // event_id
-            "Direct", // summary_note
-            "Direct", // closing_negotiation_note
-            "Direct", // header_note
             "Direct", // used_total_value
-            "Direct"  // arc_terms
+            "Direct", // arc_terms
+            "Direct"  // currency_id
         };
     }
 
     public async Task<int> MigrateAsync()
     {
+        System.Diagnostics.Debugger.Break(); // 🔴 Debugger will pause here
+        Console.WriteLine("🚀 Starting ARCMain migration...");
+        
         using var sqlConn = GetSqlServerConnection();
         using var pgConn = GetPostgreSqlConnection();
+        
+        Console.WriteLine("📡 Opening SQL Server connection...");
         await sqlConn.OpenAsync();
+        Console.WriteLine("✓ SQL Server connected");
+        
+        Console.WriteLine("📡 Opening PostgreSQL connection...");
         await pgConn.OpenAsync();
+        Console.WriteLine("✓ PostgreSQL connected");
 
+        Console.WriteLine($"📋 Executing query: {SelectQuery.Substring(0, Math.Min(100, SelectQuery.Length))}...");
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await sqlCmd.ExecuteReaderAsync();
 
+        Console.WriteLine($"✓ Query executed. Checking for records...");
+        
         using var pgCmd = new NpgsqlCommand(InsertQuery, pgConn);
 
         int insertedCount = 0;
         int skippedCount = 0;
+        int totalReadCount = 0;
 
         while (await reader.ReadAsync())
         {
+            totalReadCount++;
+            if (totalReadCount == 1)
+            {
+                Console.WriteLine($"✓ Found records! Processing...");
+            }
+            
+            if (totalReadCount % 10 == 0)
+            {
+                Console.WriteLine($"📊 Processed {totalReadCount} records so far... (Inserted: {insertedCount}, Skipped: {skippedCount})");
+            }
+            
             try
             {
                 pgCmd.Parameters.Clear();
@@ -172,15 +183,12 @@ public class ARCMainMigration : MigrationService
                 pgCmd.Parameters.AddWithValue("@supplier_id", reader["VendorId"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@total_arc_value", reader["TotalARCValue"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@arc_type", reader["QuantityLimitation"] ?? DBNull.Value);
-                pgCmd.Parameters.AddWithValue("@value_tolerance_percentage", reader["ValueTolerance"] ?? DBNull.Value);
-                pgCmd.Parameters.AddWithValue("@quantity_tolerance_percentage", reader["QuantityTolerance"] ?? DBNull.Value);
+                pgCmd.Parameters.AddWithValue("@tolerance_percentage", reader["ValueTolerance"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@company_id", reader["ClientSAPId"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@event_id", reader["EventId"] ?? DBNull.Value);
-                pgCmd.Parameters.AddWithValue("@summary_note", reader["SummaryNote"] ?? DBNull.Value);
-                pgCmd.Parameters.AddWithValue("@closing_negotiation_note", reader["ClosingNegotiationNote"] ?? DBNull.Value);
-                pgCmd.Parameters.AddWithValue("@header_note", reader["HeaderNote"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@used_total_value", reader["UsedTotalValue"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@arc_terms", reader["ARCTerms"] ?? DBNull.Value);
+                pgCmd.Parameters.AddWithValue("@currency_id", DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@created_by", reader["CreatedBy"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@created_date", reader["CreatedDate"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@modified_by", reader["UpdatedBy"] ?? DBNull.Value);
@@ -205,9 +213,23 @@ public class ARCMainMigration : MigrationService
             }
         }
 
+        Console.WriteLine($"\n📊 Migration Summary:");
+        Console.WriteLine($"   Total records read: {totalReadCount}");
+        Console.WriteLine($"   ✓ Successfully inserted: {insertedCount}");
+        Console.WriteLine($"   ❌ Skipped (errors): {skippedCount}");
+        
+        if (totalReadCount == 0)
+        {
+            Console.WriteLine($"\n⚠️  WARNING: No records found in TBL_ARCMain table!");
+            Console.WriteLine($"   Please verify:");
+            Console.WriteLine($"   1. Table exists in SQL Server database");
+            Console.WriteLine($"   2. Table has data: SELECT COUNT(*) FROM TBL_ARCMain");
+            Console.WriteLine($"   3. Connection string is correct");
+        }
+        
         if (skippedCount > 0)
         {
-            Console.WriteLine($"Warning: {skippedCount} records were skipped due to errors.");
+            Console.WriteLine($"\n⚠️  Warning: {skippedCount} records were skipped due to errors.");
         }
 
         return insertedCount;
