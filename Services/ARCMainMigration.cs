@@ -126,27 +126,24 @@ public class ARCMainMigration : MigrationService
 
     public async Task<int> MigrateAsync()
     {
-        System.Diagnostics.Debugger.Break(); // 🔴 Debugger will pause here
-        Console.WriteLine("🚀 Starting ARCMain migration...");
-        
-        using var sqlConn = GetSqlServerConnection();
-        using var pgConn = GetPostgreSqlConnection();
-        
-        Console.WriteLine("📡 Opening SQL Server connection...");
-        await sqlConn.OpenAsync();
-        Console.WriteLine("✓ SQL Server connected");
-        
-        Console.WriteLine("📡 Opening PostgreSQL connection...");
-        await pgConn.OpenAsync();
-        Console.WriteLine("✓ PostgreSQL connected");
+        return await base.MigrateAsync(useTransaction: true);
+    }
 
+    protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
+    {
+        Console.WriteLine("🚀 Starting ARCMain migration...");
         Console.WriteLine($"📋 Executing query: {SelectQuery.Substring(0, Math.Min(100, SelectQuery.Length))}...");
+        
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await sqlCmd.ExecuteReaderAsync();
 
         Console.WriteLine($"✓ Query executed. Checking for records...");
         
         using var pgCmd = new NpgsqlCommand(InsertQuery, pgConn);
+        if (transaction != null)
+        {
+            pgCmd.Transaction = transaction;
+        }
 
         int insertedCount = 0;
         int skippedCount = 0;
