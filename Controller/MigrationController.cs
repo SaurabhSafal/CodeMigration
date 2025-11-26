@@ -238,6 +238,97 @@ public class MigrationController : Controller
             return Json(new { success = false, error = ex.Message });
         }
     }
+
+    [HttpPost("migrate-all-with-transaction")]
+    public async Task<IActionResult> MigrateAllWithTransaction()
+    {
+        try
+        {
+            var migrationServices = new List<MigrationService>
+            {
+                _uomMigration,
+                _currencyMigration,
+                _materialGroupMigration,
+                _plantMigration,
+                _purchaseGroupMigration,
+                _paymentTermMigration,
+                _materialMigration,
+                _taxMigration,
+                _usersmasterMigration,
+                _erpprlinesMigration
+            };
+
+            var (totalMigrated, results) = await MigrationService.MigrateMultipleAsync(migrationServices, useCommonTransaction: true);
+
+            return Json(new 
+            { 
+                success = true, 
+                message = $"Successfully migrated {totalMigrated} records across all services.",
+                results = results,
+                timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            return Json(new 
+            { 
+                success = false, 
+                message = "Migration failed and was rolled back.", 
+                error = ex.Message,
+                timestamp = DateTime.UtcNow
+            });
+        }
+    }
+
+    [HttpPost("migrate-individual-with-transactions")]
+    public async Task<IActionResult> MigrateIndividualWithTransactions()
+    {
+        var results = new Dictionary<string, object>();
+        
+        try
+        {
+            // Migrate each service individually with their own transactions
+            results["UOM"] = new { count = await _uomMigration.MigrateAsync(), success = true };
+            results["Currency"] = new { count = await _currencyMigration.MigrateAsync(), success = true };
+            results["MaterialGroup"] = new { count = await _materialGroupMigration.MigrateAsync(), success = true };
+            results["Plant"] = new { count = await _plantMigration.MigrateAsync(), success = true };
+            results["PurchaseGroup"] = new { count = await _purchaseGroupMigration.MigrateAsync(), success = true };
+            results["PaymentTerm"] = new { count = await _paymentTermMigration.MigrateAsync(), success = true };
+            results["Material"] = new { count = await _materialMigration.MigrateAsync(), success = true };
+            results["Tax"] = new { count = await _taxMigration.MigrateAsync(), success = true };
+            results["Users"] = new { count = await _usersmasterMigration.MigrateAsync(), success = true };
+            results["ErpPrLines"] = new { count = await _erpprlinesMigration.MigrateAsync(), success = true };
+
+            // Handle EventMaster separately due to its different return type
+            var eventResult = await _eventMigration.MigrateAsync();
+            results["Event"] = new 
+            { 
+                count = eventResult.SuccessCount, 
+                failed = eventResult.FailedCount, 
+                errors = eventResult.Errors, 
+                success = eventResult.FailedCount == 0 
+            };
+
+            return Json(new 
+            { 
+                success = true, 
+                message = "Individual migrations completed.",
+                results = results,
+                timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            return Json(new 
+            { 
+                success = false, 
+                message = "One or more migrations failed.", 
+                error = ex.Message,
+                results = results,
+                timestamp = DateTime.UtcNow
+            });
+        }
+    }
 }
 
 public class MigrationRequest

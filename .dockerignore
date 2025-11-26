@@ -78,3 +78,17 @@ bld/
 [Oo]bj/
 [Ll]og/
 [Ll]ogs/
+
+# Python specific
+python/__pycache__/
+python/*.pyc
+python/venv/
+python/.env
+python/env/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+
+# Scripts
+*.sh

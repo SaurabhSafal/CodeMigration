@@ -403,6 +403,14 @@ public class EventMasterMigration : MigrationService
         return (successCount, failedCount, errors);
     }
 
+    protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
+    {
+        // For EventMasterMigration, we use the existing complex logic with per-record transactions
+        // This is a wrapper to satisfy the base class interface
+        var (successCount, failedCount, errors) = await MigrateAsync();
+        return successCount;
+    }
+
     private bool SafeConvertToBoolean(object value)
     {
         if (value == null || value == DBNull.Value) return false;
