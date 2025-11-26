@@ -10,6 +10,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<UOMMasterMigration>();
         services.AddScoped<PlantMasterMigration>();
         services.AddScoped<CurrencyMasterMigration>();
+        services.AddScoped<CountryMasterMigration>();
         services.AddScoped<MaterialGroupMasterMigration>();
         services.AddScoped<PurchaseGroupMasterMigration>();
         services.AddScoped<PaymentTermMasterMigration>();

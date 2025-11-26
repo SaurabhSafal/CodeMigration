@@ -100,7 +100,7 @@ public abstract class MigrationService
     /// <summary>
     /// Dynamically generates mappings based on SelectQuery, InsertQuery, and Logics
     /// </summary>
-    public List<object> GetMappings()
+    public virtual List<object> GetMappings()
     {
         // Parse sources from SELECT
         var sources = ParseSelectColumns(SelectQuery);

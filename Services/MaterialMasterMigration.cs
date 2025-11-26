@@ -34,6 +34,27 @@ public class MaterialMasterMigration : MigrationService
         };
     }
 
+    public override List<object> GetMappings()
+    {
+        return new List<object>
+        {
+            new { source = "ITEMID", logic = "ITEMID -> material_id (Direct)", target = "material_id" },
+            new { source = "ITEMCODE", logic = "ITEMCODE -> material_code (Direct)", target = "material_code" },
+            new { source = "ITEMNAME", logic = "ITEMNAME -> material_name (Direct)", target = "material_name" },
+            new { source = "ITEMDESCRIPTION", logic = "ITEMDESCRIPTION -> material_description (Direct)", target = "material_description" },
+            new { source = "UOMId", logic = "UOMId -> uom_id (FK to uom_master)", target = "uom_id" },
+            new { source = "MaterialGroupId", logic = "MaterialGroupId -> material_group_id (FK to material_group_master)", target = "material_group_id" },
+            new { source = "ClientSAPId", logic = "ClientSAPId -> company_id (FK to company)", target = "company_id" },
+            new { source = "-", logic = "created_by -> 0 (Fixed Default)", target = "created_by" },
+            new { source = "-", logic = "created_date -> NOW() (Generated)", target = "created_date" },
+            new { source = "-", logic = "modified_by -> NULL (Fixed Default)", target = "modified_by" },
+            new { source = "-", logic = "modified_date -> NULL (Fixed Default)", target = "modified_date" },
+            new { source = "-", logic = "is_deleted -> false (Fixed Default)", target = "is_deleted" },
+            new { source = "-", logic = "deleted_by -> NULL (Fixed Default)", target = "deleted_by" },
+            new { source = "-", logic = "deleted_date -> NULL (Fixed Default)", target = "deleted_date" }
+        };
+    }
+
     public async Task<int> MigrateAsync()
     {
         return await base.MigrateAsync(useTransaction: true);

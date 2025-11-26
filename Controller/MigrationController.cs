@@ -9,6 +9,7 @@ public class MigrationController : Controller
     private readonly UOMMasterMigration _uomMigration;
     private readonly PlantMasterMigration _plantMigration;
     private readonly CurrencyMasterMigration _currencyMigration;
+    private readonly CountryMasterMigration _countryMigration;
     private readonly MaterialGroupMasterMigration _materialGroupMigration;
     private readonly PurchaseGroupMasterMigration _purchaseGroupMigration;
     private readonly PaymentTermMasterMigration _paymentTermMigration;
@@ -24,6 +25,7 @@ public class MigrationController : Controller
         UOMMasterMigration uomMigration, 
         PlantMasterMigration plantMigration,
         CurrencyMasterMigration currencyMigration,
+        CountryMasterMigration countryMigration,
         MaterialGroupMasterMigration materialGroupMigration,
         PurchaseGroupMasterMigration purchaseGroupMigration,
         PaymentTermMasterMigration paymentTermMigration,
@@ -37,6 +39,7 @@ public class MigrationController : Controller
         _uomMigration = uomMigration;
         _plantMigration = plantMigration;
         _currencyMigration = currencyMigration;
+        _countryMigration = countryMigration;
         _materialGroupMigration = materialGroupMigration;
         _purchaseGroupMigration = purchaseGroupMigration;
         _paymentTermMigration = paymentTermMigration;
@@ -62,6 +65,7 @@ public class MigrationController : Controller
             new { name = "uom", description = "TBL_UOM_MASTER to uom_master" },
             new { name = "plant", description = "TBL_PlantMaster to plant_master" },
             new { name = "currency", description = "TBL_CURRENCYMASTER to currency_master" },
+            new { name = "country", description = "TBL_COUNTRYMASTER to country_master" },
             new { name = "materialgroup", description = "TBL_MaterialGroupMaster to material_group_master" },
             new { name = "purchasegroup", description = "TBL_PurchaseGroupMaster to purchase_group_master" },
             new { name = "paymentterm", description = "TBL_PAYMENTTERMMASTER to payment_term_master" },
@@ -91,6 +95,11 @@ public class MigrationController : Controller
         else if (table.ToLower() == "currency")
         {
             var mappings = _currencyMigration.GetMappings();
+            return Json(mappings);
+        }
+        else if (table.ToLower() == "country")
+        {
+            var mappings = _countryMigration.GetMappings();
             return Json(mappings);
         }
         else if (table.ToLower() == "materialgroup")
@@ -159,6 +168,10 @@ public class MigrationController : Controller
             else if (request.Table.ToLower() == "currency")
             {
                 recordCount = await _currencyMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "country")
+            {
+                recordCount = await _countryMigration.MigrateAsync();
             }
             else if (request.Table.ToLower() == "materialgroup")
             {
@@ -279,6 +292,7 @@ public class MigrationController : Controller
             {
                 _uomMigration,
                 _currencyMigration,
+                _countryMigration,
                 _materialGroupMigration,
                 _plantMigration,
                 _purchaseGroupMigration,
@@ -322,6 +336,7 @@ public class MigrationController : Controller
             // Migrate each service individually with their own transactions
             results["UOM"] = new { count = await _uomMigration.MigrateAsync(), success = true };
             results["Currency"] = new { count = await _currencyMigration.MigrateAsync(), success = true };
+            results["Country"] = new { count = await _countryMigration.MigrateAsync(), success = true };
             results["MaterialGroup"] = new { count = await _materialGroupMigration.MigrateAsync(), success = true };
             results["Plant"] = new { count = await _plantMigration.MigrateAsync(), success = true };
             results["PurchaseGroup"] = new { count = await _purchaseGroupMigration.MigrateAsync(), success = true };
@@ -434,6 +449,56 @@ public class MigrationController : Controller
                 else
                 {
                     validation["Error"] = "Source table TBL_ITEMMASTER does not exist";
+                }
+            }
+            else if (table.ToLower() == "country")
+            {
+                using var sqlConn = _countryMigration.GetSqlServerConnection();
+                await sqlConn.OpenAsync();
+                
+                // Check if table exists
+                var checkTableQuery = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'TBL_COUNTRYMASTER'";
+                using var checkCmd = new SqlCommand(checkTableQuery, sqlConn);
+                var tableExists = Convert.ToInt32(await checkCmd.ExecuteScalarAsync()) > 0;
+                
+                validation["TableExists"] = tableExists;
+                
+                if (tableExists)
+                {
+                    // Get total record count
+                    var countQuery = "SELECT COUNT(*) FROM TBL_COUNTRYMASTER";
+                    using var countCmd = new SqlCommand(countQuery, sqlConn);
+                    validation["TotalRecords"] = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
+                    
+                    // Check for problematic records
+                    var problemsQuery = @"
+                        SELECT 
+                            COUNT(*) as TotalRecords,
+                            SUM(CASE WHEN Country_NAME IS NULL OR Country_NAME = '' THEN 1 ELSE 0 END) as NullCountryNames,
+                            SUM(CASE WHEN Country_Shname IS NULL OR Country_Shname = '' THEN 1 ELSE 0 END) as NullCountryCodes,
+                            SUM(CASE WHEN CountryMasterID IS NULL THEN 1 ELSE 0 END) as NullCountryMasterIds
+                        FROM TBL_COUNTRYMASTER";
+                    
+                    using var problemsCmd = new SqlCommand(problemsQuery, sqlConn);
+                    using var reader = await problemsCmd.ExecuteReaderAsync();
+                    
+                    if (await reader.ReadAsync())
+                    {
+                        validation["DataQuality"] = new
+                        {
+                            TotalRecords = reader["TotalRecords"],
+                            Issues = new
+                            {
+                                NullCountryNames = reader["NullCountryNames"],
+                                NullCountryCodes = reader["NullCountryCodes"],
+                                NullCountryMasterIds = reader["NullCountryMasterIds"]
+                            }
+                        };
+                    }
+                }
+                else
+                {
+                    validation["Error"] = "Source table TBL_COUNTRYMASTER does not exist";
                 }
             }
             else
