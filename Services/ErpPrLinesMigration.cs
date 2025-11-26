@@ -177,15 +177,18 @@ INSERT INTO erp_pr_lines (
 
     public async Task<int> MigrateAsync()
     {
-        using var sqlConn = GetSqlServerConnection();
-        using var pgConn = GetPostgreSqlConnection();
+        return await base.MigrateAsync(useTransaction: true);
+    }
 
-        await sqlConn.OpenAsync();
-        await pgConn.OpenAsync();
-
+    protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
+    {
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await sqlCmd.ExecuteReaderAsync();
         using var pgCmd = new NpgsqlCommand(InsertQuery, pgConn);
+        if (transaction != null)
+        {
+            pgCmd.Transaction = transaction;
+        }
 
         int insertedCount = 0;
         while (await reader.ReadAsync())
