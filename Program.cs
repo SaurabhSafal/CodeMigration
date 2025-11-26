@@ -1,6 +1,11 @@
 using Extensions;
+using Microsoft.AspNetCore.DataProtection;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Configure Data Protection for containerized environment
+builder.Services.AddDataProtection()
+    .SetApplicationName("DataMigration");
 
 // Add services to the container.
 builder.Services.AddControllersWithViews();
@@ -16,6 +21,13 @@ builder.Services.AddCors(options =>
 
 // Register migration services
 builder.Services.AddMigrationServices();
+
+// Configure logging to reduce noise in development
+if (builder.Environment.IsDevelopment())
+{
+    builder.Logging.AddFilter("Microsoft.AspNetCore.DataProtection", LogLevel.Error);
+    builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Error);
+}
 
 var app = builder.Build();
 

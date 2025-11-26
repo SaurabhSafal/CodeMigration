@@ -1,0 +1,60 @@
+services:
+  datamigration:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: datamigration-dev
+    ports:
+      - "5000:8080"  # Access via: http://localhost:5000/Migration
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - DOTNET_USE_POLLING_FILE_WATCHER=true
+      - DOTNET_WATCH_RESTART_ON_RUDE_EDIT=true
+      # Reduce logging noise
+      - Logging__LogLevel__Microsoft.AspNetCore.DataProtection=Error
+      - Logging__LogLevel__Microsoft.AspNetCore.Hosting=Error
+
+      # Connection Strings - Update these with your actual connection strings
+      - ConnectionStrings__SqlServer=Server=192.168.3.250,1433;Database=predebug;User Id=qa;Password=admin@123;TrustServerCertificate=True;
+      - ConnectionStrings__PostgreSql=Host=navikaran21112025.cpai22qoqeyo.ap-south-1.rds.amazonaws.com;Database=navikaran_mig;Username=postgres;Password=3K:]NsC2sCY>e279>dTmzo$$iTf:8;Include Error Detail=true;
+    restart: unless-stopped
+    networks:
+      - migration-network
+    volumes:
+      - ./logs:/app/logs  # Only mount logs directory
+      - dataprotection-keys:/app/keys  # Persist data protection keys
+    labels:
+      - "com.datamigration.description=Data Migration Application (Development with Hot Reload)"
+      - "com.datamigration.url=http://localhost:5000/Migration"
+    develop:
+      watch:
+        - action: sync
+          path: .
+          target: /app
+          ignore:
+            - bin/
+            - obj/
+            - .git/
+            - .vs/
+            - .vscode/
+            - logs/
+            - python/
+            - "*.user"
+            - "*.tmp"
+            - "*.log"
+            - "*.sh"
+            - "Dockerfile*"
+            - "docker-compose*"
+            - ".dockerignore"
+        - action: rebuild
+          path: DataMigration.csproj
+        - action: rebuild
+          path: "**/*.csproj"
+
+networks:
+  migration-network:
+    driver: bridge
+
+volumes:
+  dataprotection-keys:

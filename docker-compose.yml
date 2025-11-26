@@ -21,6 +21,20 @@ services:
     labels:
       - "com.datamigration.description=Data Migration Application"
       - "com.datamigration.url=http://localhost:5000/Migration"
+    develop:
+      watch:
+        - action: sync
+          path: .
+          target: /app
+          ignore:
+            - bin/
+            - obj/
+            - .git/
+            - .vs/
+            - logs/
+            - "*.user"
+        - action: rebuild
+          path: DataMigration.csproj
 
 networks:
   migration-network:

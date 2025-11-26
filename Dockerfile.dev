@@ -1,0 +1,27 @@
+# Development Dockerfile with hot reload support
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS base
+WORKDIR /app
+EXPOSE 8080
+EXPOSE 8081
+
+# Create directory for data protection keys
+RUN mkdir -p /app/keys
+
+# Install dotnet-watch globally (if not already available)
+RUN dotnet tool install --global dotnet-watch --version 8.0.* || true
+
+# Set up environment for development
+ENV ASPNETCORE_ENVIRONMENT=Development
+ENV ASPNETCORE_URLS=http://+:8080
+ENV DOTNET_USE_POLLING_FILE_WATCHER=true
+ENV DOTNET_WATCH_RESTART_ON_RUDE_EDIT=true
+
+# Copy project file and restore dependencies
+COPY ["DataMigration.csproj", "."]
+RUN dotnet restore "./DataMigration.csproj"
+
+# Copy source code
+COPY . .
+
+# Set the entry point to use dotnet watch
+ENTRYPOINT ["dotnet", "watch", "run", "--project", "DataMigration.csproj", "--urls", "http://0.0.0.0:8080"]
