@@ -11,30 +11,32 @@ public class ARCMainMigration : MigrationService
     // Using aliases that match PostgreSQL column names
     protected override string SelectQuery => @"
         SELECT 
-            ARCMainId,
-            ARCName,
-            ARCNo,
-            ARCDescription,
-            SupplierName,
-            VendorCode,
-            VendorQuotationRef,
-            FromDate,
-            ToDate,
-            Remarks,
-            Status,
-            VendorId,
-            TotalARCValue,
-            ValueTolerance,
-            QuantityLimitation,
-            ClientSAPId,
-            EventId,
-            UsedTotalValue,
-            ARCTerms,
-            CreatedBy,
-            CreatedDate,
-            UpdatedBy,
-            UpdatedDate
-        FROM TBL_ARCMain";
+            m.ARCMainId,
+            m.ARCName,
+            m.ARCNo,
+            m.ARCDescription,
+            m.SupplierName,
+            m.VendorCode,
+            m.VendorQuotationRef,
+            m.FromDate,
+            m.ToDate,
+            m.Remarks,
+            m.Status,
+            m.VendorId,
+            m.TotalARCValue,
+            m.ValueTolerance,
+            m.QuantityLimitation,
+            m.ClientSAPId,
+            m.EventId,
+            m.UsedTotalValue,
+            m.ARCTerms,
+            m.CreatedBy,
+            m.CreatedDate,
+            m.UpdatedBy,
+            m.UpdatedDate,
+            s.CurrencyId
+        FROM TBL_ARCMain m
+        LEFT JOIN TBL_ARCSub s ON s.ARCMainId = m.ARCMainId";
 
     protected override string InsertQuery => @"
         INSERT INTO arc_header (
@@ -120,7 +122,7 @@ public class ARCMainMigration : MigrationService
             "Direct", // event_id
             "Direct", // used_total_value
             "Direct", // arc_terms
-            "Direct"  // currency_id
+            "Lookup: TBL_ARCSub"  // currency_id
         };
     }
 
@@ -185,7 +187,7 @@ public class ARCMainMigration : MigrationService
                 pgCmd.Parameters.AddWithValue("@event_id", reader["EventId"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@used_total_value", reader["UsedTotalValue"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@arc_terms", reader["ARCTerms"] ?? DBNull.Value);
-                pgCmd.Parameters.AddWithValue("@currency_id", DBNull.Value);
+                pgCmd.Parameters.AddWithValue("@currency_id", reader["CurrencyId"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@created_by", reader["CreatedBy"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@created_date", reader["CreatedDate"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@modified_by", reader["UpdatedBy"] ?? DBNull.Value);
