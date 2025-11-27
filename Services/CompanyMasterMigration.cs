@@ -30,6 +30,28 @@ public class CompanyMasterMigration : MigrationService
             address,
             company_logo_url,
             company_logo_name,
+            default_currency,
+            qty_decimal_places,
+            value_decimal_places,
+            is_indian_currency,
+            date_format,
+            time_format,
+            rfq_prefix,
+            rfq_length,
+            auction_prefix,
+            auction_length,
+            supplier_group_prefix,
+            supplier_group_length,
+            suppliercode_prefix,
+            suppliercode_length,
+            workflow_prefix,
+            workflow_length,
+            workflow_version_length,
+            participate_terms,
+            nfa_prefix,
+            nfano_length,
+            po_months_validity,
+            site_url,
             created_by,
             created_date,
             modified_by,
@@ -46,6 +68,28 @@ public class CompanyMasterMigration : MigrationService
             @address,
             @company_logo_url,
             @company_logo_name,
+            @default_currency,
+            @qty_decimal_places,
+            @value_decimal_places,
+            @is_indian_currency,
+            @date_format,
+            @time_format,
+            @rfq_prefix,
+            @rfq_length,
+            @auction_prefix,
+            @auction_length,
+            @supplier_group_prefix,
+            @supplier_group_length,
+            @suppliercode_prefix,
+            @suppliercode_length,
+            @workflow_prefix,
+            @workflow_length,
+            @workflow_version_length,
+            @participate_terms,
+            @nfa_prefix,
+            @nfano_length,
+            @po_months_validity,
+            @site_url,
             @created_by,
             @created_date,
             @modified_by,
@@ -61,14 +105,87 @@ public class CompanyMasterMigration : MigrationService
     {
         return new List<string>
         {
-            "Direct", // company_id
-            "Direct", // company_code
-            "Direct", // company_name
-            "Direct", // sap_version
-            "Direct", // pr_allocation_logic
-            "Direct", // address
-            "Direct", // company_logo_url
-            "Direct"  // company_logo_name
+            "ClientSAPId -> company_id (Direct)",
+            "ClientSAPCode -> company_code (Direct)",
+            "ClientSAPName -> company_name (Direct)",
+            "SAP -> sap_version (Direct)",
+            "PRAllocationLogic -> pr_allocation_logic (Direct)",
+            "Address -> address (Direct)",
+            "UploadDocument -> company_logo_url (Direct)",
+            "DocumentName -> company_logo_name (Direct)",
+            "default_currency -> INR (Fixed Default)",
+            "qty_decimal_places -> 3 (Fixed Default)",
+            "value_decimal_places -> 2 (Fixed Default)",
+            "is_indian_currency -> true (Fixed Default)",
+            "date_format -> dd/MM/yyyy (Fixed Default)",
+            "time_format -> hh:mm tt (Fixed Default)",
+            "rfq_prefix -> R (Fixed Default)",
+            "rfq_length -> 4 (Fixed Default)",
+            "auction_prefix -> A (Fixed Default)",
+            "auction_length -> 4 (Fixed Default)",
+            "supplier_group_prefix -> WCL (Fixed Default)",
+            "supplier_group_length -> 7 (Fixed Default)",
+            "suppliercode_prefix -> T (Fixed Default)",
+            "suppliercode_length -> 7 (Fixed Default)",
+            "workflow_prefix -> WF/ (Fixed Default)",
+            "workflow_length -> 5 (Fixed Default)",
+            "workflow_version_length -> 3 (Fixed Default)",
+            "participate_terms -> empty (Fixed Default)",
+            "nfa_prefix -> empty (Fixed Default)",
+            "nfano_length -> 6 (Fixed Default)",
+            "po_months_validity -> 12 (Fixed Default)",
+            "site_url -> empty (Fixed Default)",
+            "created_by -> NULL (Fixed)",
+            "created_date -> NULL (Fixed)",
+            "modified_by -> NULL (Fixed)",
+            "modified_date -> NULL (Fixed)",
+            "is_deleted -> false (Fixed)",
+            "deleted_by -> NULL (Fixed)",
+            "deleted_date -> NULL (Fixed)"
+        };
+    }
+
+    public override List<object> GetMappings()
+    {
+        return new List<object>
+        {
+            new { source = "ClientSAPId", logic = "ClientSAPId -> company_id (Direct)", target = "company_id" },
+            new { source = "ClientSAPCode", logic = "ClientSAPCode -> company_code (Direct)", target = "company_code" },
+            new { source = "ClientSAPName", logic = "ClientSAPName -> company_name (Direct)", target = "company_name" },
+            new { source = "SAP", logic = "SAP -> sap_version (Direct)", target = "sap_version" },
+            new { source = "PRAllocationLogic", logic = "PRAllocationLogic -> pr_allocation_logic (Direct)", target = "pr_allocation_logic" },
+            new { source = "Address", logic = "Address -> address (Direct)", target = "address" },
+            new { source = "UploadDocument", logic = "UploadDocument -> company_logo_url (Direct)", target = "company_logo_url" },
+            new { source = "DocumentName", logic = "DocumentName -> company_logo_name (Direct)", target = "company_logo_name" },
+            new { source = "-", logic = "default_currency -> INR (Fixed Default)", target = "default_currency" },
+            new { source = "-", logic = "qty_decimal_places -> 3 (Fixed Default)", target = "qty_decimal_places" },
+            new { source = "-", logic = "value_decimal_places -> 2 (Fixed Default)", target = "value_decimal_places" },
+            new { source = "-", logic = "is_indian_currency -> true (Fixed Default)", target = "is_indian_currency" },
+            new { source = "-", logic = "date_format -> dd/MM/yyyy (Fixed Default)", target = "date_format" },
+            new { source = "-", logic = "time_format -> hh:mm tt (Fixed Default)", target = "time_format" },
+            new { source = "-", logic = "rfq_prefix -> R (Fixed Default)", target = "rfq_prefix" },
+            new { source = "-", logic = "rfq_length -> 4 (Fixed Default)", target = "rfq_length" },
+            new { source = "-", logic = "auction_prefix -> A (Fixed Default)", target = "auction_prefix" },
+            new { source = "-", logic = "auction_length -> 4 (Fixed Default)", target = "auction_length" },
+            new { source = "-", logic = "supplier_group_prefix -> WCL (Fixed Default)", target = "supplier_group_prefix" },
+            new { source = "-", logic = "supplier_group_length -> 7 (Fixed Default)", target = "supplier_group_length" },
+            new { source = "-", logic = "suppliercode_prefix -> T (Fixed Default)", target = "suppliercode_prefix" },
+            new { source = "-", logic = "suppliercode_length -> 7 (Fixed Default)", target = "suppliercode_length" },
+            new { source = "-", logic = "workflow_prefix -> WF/ (Fixed Default)", target = "workflow_prefix" },
+            new { source = "-", logic = "workflow_length -> 5 (Fixed Default)", target = "workflow_length" },
+            new { source = "-", logic = "workflow_version_length -> 3 (Fixed Default)", target = "workflow_version_length" },
+            new { source = "-", logic = "participate_terms -> empty (Fixed Default)", target = "participate_terms" },
+            new { source = "-", logic = "nfa_prefix -> empty (Fixed Default)", target = "nfa_prefix" },
+            new { source = "-", logic = "nfano_length -> 6 (Fixed Default)", target = "nfano_length" },
+            new { source = "-", logic = "po_months_validity -> 12 (Fixed Default)", target = "po_months_validity" },
+            new { source = "-", logic = "site_url -> empty (Fixed Default)", target = "site_url" },
+            new { source = "-", logic = "created_by -> NULL (Fixed Default)", target = "created_by" },
+            new { source = "-", logic = "created_date -> NULL (Fixed Default)", target = "created_date" },
+            new { source = "-", logic = "modified_by -> NULL (Fixed Default)", target = "modified_by" },
+            new { source = "-", logic = "modified_date -> NULL (Fixed Default)", target = "modified_date" },
+            new { source = "-", logic = "is_deleted -> false (Fixed Default)", target = "is_deleted" },
+            new { source = "-", logic = "deleted_by -> NULL (Fixed Default)", target = "deleted_by" },
+            new { source = "-", logic = "deleted_date -> NULL (Fixed Default)", target = "deleted_date" }
         };
     }
 
@@ -122,6 +239,28 @@ public class CompanyMasterMigration : MigrationService
                 pgCmd.Parameters.AddWithValue("@address", reader["Address"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@company_logo_url", reader["UploadDocument"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@company_logo_name", reader["DocumentName"] ?? DBNull.Value);
+                pgCmd.Parameters.AddWithValue("@default_currency", "INR");
+                pgCmd.Parameters.AddWithValue("@qty_decimal_places", 3);
+                pgCmd.Parameters.AddWithValue("@value_decimal_places", 2);
+                pgCmd.Parameters.AddWithValue("@is_indian_currency", true);
+                pgCmd.Parameters.AddWithValue("@date_format", "dd/MM/yyyy");
+                pgCmd.Parameters.AddWithValue("@time_format", "hh:mm tt");
+                pgCmd.Parameters.AddWithValue("@rfq_prefix", "R");
+                pgCmd.Parameters.AddWithValue("@rfq_length", 4);
+                pgCmd.Parameters.AddWithValue("@auction_prefix", "A");
+                pgCmd.Parameters.AddWithValue("@auction_length", 4);
+                pgCmd.Parameters.AddWithValue("@supplier_group_prefix", "WCL");
+                pgCmd.Parameters.AddWithValue("@supplier_group_length", 7);
+                pgCmd.Parameters.AddWithValue("@suppliercode_prefix", "T");
+                pgCmd.Parameters.AddWithValue("@suppliercode_length", 7);
+                pgCmd.Parameters.AddWithValue("@workflow_prefix", "WF/");
+                pgCmd.Parameters.AddWithValue("@workflow_length", 5);
+                pgCmd.Parameters.AddWithValue("@workflow_version_length", 3);
+                pgCmd.Parameters.AddWithValue("@participate_terms", "");
+                pgCmd.Parameters.AddWithValue("@nfa_prefix", "");
+                pgCmd.Parameters.AddWithValue("@nfano_length", 6);
+                pgCmd.Parameters.AddWithValue("@po_months_validity", 12);
+                pgCmd.Parameters.AddWithValue("@site_url", "");
                 pgCmd.Parameters.AddWithValue("@created_by", DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@created_date", DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@modified_by", DBNull.Value);

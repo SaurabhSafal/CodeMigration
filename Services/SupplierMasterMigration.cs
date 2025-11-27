@@ -140,10 +140,10 @@ public class SupplierMasterMigration : MigrationService
             "Primary_Phone -> mobile_number1 (Direct)",
             "MobileTelephoneNumber -> mobile_number2 (Direct)",
             "Primary_Email -> primary_email_id (Direct)",
-            "OfficeCountryID -> office_country_id (Direct)",
+            "OfficeCountryID -> office_country_id (Direct, defaults to 1 if NULL)",
             "OfficeCity -> office_city (Direct)",
             "StateID -> office_state (Convert to text)",
-            "ClientSAPId -> company_id (FK to company_master)",
+            "ClientSAPId -> company_id (FK to company_master, defaults to 1 if NULL)",
             "VendorGroupId -> supplier_group_id (FK to supplier_groupmaster)",
             "StatusVendor -> status (Direct)",
             "created_by -> 0 (Fixed)",
@@ -172,10 +172,10 @@ public class SupplierMasterMigration : MigrationService
             new { source = "Primary_Phone", logic = "Primary_Phone -> mobile_number1 (Direct)", target = "mobile_number1" },
             new { source = "MobileTelephoneNumber", logic = "MobileTelephoneNumber -> mobile_number2 (Direct)", target = "mobile_number2" },
             new { source = "Primary_Email", logic = "Primary_Email -> primary_email_id (Direct)", target = "primary_email_id" },
-            new { source = "OfficeCountryID", logic = "OfficeCountryID -> office_country_id (Direct)", target = "office_country_id" },
+            new { source = "OfficeCountryID", logic = "OfficeCountryID -> office_country_id (Direct, defaults to 1 if NULL)", target = "office_country_id" },
             new { source = "OfficeCity", logic = "OfficeCity -> office_city (Direct)", target = "office_city" },
             new { source = "StateID", logic = "StateID -> office_state (Convert to text)", target = "office_state" },
-            new { source = "ClientSAPId", logic = "ClientSAPId -> company_id (FK to company_master)", target = "company_id" },
+            new { source = "ClientSAPId", logic = "ClientSAPId -> company_id (FK to company_master, defaults to 1 if NULL)", target = "company_id" },
             new { source = "VendorGroupId", logic = "VendorGroupId -> supplier_group_id (FK to supplier_groupmaster)", target = "supplier_group_id" },
             new { source = "StatusVendor", logic = "StatusVendor -> status (Direct)", target = "status" },
             new { source = "-", logic = "created_by -> 0 (Fixed Default)", target = "created_by" },
@@ -354,10 +354,10 @@ public class SupplierMasterMigration : MigrationService
             var primaryPhone = reader.IsDBNull(reader.GetOrdinal("Primary_Phone")) ? "" : reader["Primary_Phone"].ToString();
             var mobilePhone = reader.IsDBNull(reader.GetOrdinal("MobileTelephoneNumber")) ? "" : reader["MobileTelephoneNumber"].ToString();
             var primaryEmail = reader.IsDBNull(reader.GetOrdinal("Primary_Email")) ? "" : reader["Primary_Email"].ToString();
-            var officeCountryId = reader.IsDBNull(reader.GetOrdinal("OfficeCountryID")) ? (int?)null : Convert.ToInt32(reader["OfficeCountryID"]);
+            var officeCountryId = reader.IsDBNull(reader.GetOrdinal("OfficeCountryID")) ? 1 : Convert.ToInt32(reader["OfficeCountryID"]); // Default to India (1)
             var officeCity = reader.IsDBNull(reader.GetOrdinal("OfficeCity")) ? "" : reader["OfficeCity"].ToString();
             var stateId = reader.IsDBNull(reader.GetOrdinal("StateID")) ? "" : reader["StateID"].ToString();
-            var clientSapId = reader.IsDBNull(reader.GetOrdinal("ClientSAPId")) ? (int?)null : Convert.ToInt32(reader["ClientSAPId"]);
+            var clientSapId = reader.IsDBNull(reader.GetOrdinal("ClientSAPId")) ? 1 : Convert.ToInt32(reader["ClientSAPId"]); // Default to company 1
             var vendorGroupId = reader.IsDBNull(reader.GetOrdinal("VendorGroupId")) ? (int?)null : Convert.ToInt32(reader["VendorGroupId"]);
             var statusVendor = reader.IsDBNull(reader.GetOrdinal("StatusVendor")) ? "" : reader["StatusVendor"].ToString();
 
@@ -442,10 +442,10 @@ public class SupplierMasterMigration : MigrationService
             await writer.WriteAsync(record.MobileNumber1);
             await writer.WriteAsync(record.MobileNumber2);
             await writer.WriteAsync(record.PrimaryEmailId);
-            await writer.WriteAsync(record.OfficeCountryId.HasValue ? (object)record.OfficeCountryId.Value : DBNull.Value, NpgsqlTypes.NpgsqlDbType.Integer);
+            await writer.WriteAsync(record.OfficeCountryId);
             await writer.WriteAsync(record.OfficeCity);
             await writer.WriteAsync(record.OfficeState);
-            await writer.WriteAsync(record.CompanyId.HasValue ? (object)record.CompanyId.Value : DBNull.Value, NpgsqlTypes.NpgsqlDbType.Integer);
+            await writer.WriteAsync(record.CompanyId);
             await writer.WriteAsync(record.SupplierGroupId.HasValue ? (object)record.SupplierGroupId.Value : DBNull.Value, NpgsqlTypes.NpgsqlDbType.Integer);
             await writer.WriteAsync(0); // created_by
             await writer.WriteAsync(now); // created_date
@@ -489,10 +489,10 @@ public class SupplierMasterMigration : MigrationService
                 new NpgsqlParameter($"@{paramPrefix}_mobile_number1", NpgsqlTypes.NpgsqlDbType.Text) { Value = record.MobileNumber1 },
                 new NpgsqlParameter($"@{paramPrefix}_mobile_number2", NpgsqlTypes.NpgsqlDbType.Text) { Value = record.MobileNumber2 },
                 new NpgsqlParameter($"@{paramPrefix}_primary_email_id", NpgsqlTypes.NpgsqlDbType.Text) { Value = record.PrimaryEmailId },
-                new NpgsqlParameter($"@{paramPrefix}_office_country_id", NpgsqlTypes.NpgsqlDbType.Integer) { Value = record.OfficeCountryId.HasValue ? record.OfficeCountryId.Value : DBNull.Value },
+                new NpgsqlParameter($"@{paramPrefix}_office_country_id", NpgsqlTypes.NpgsqlDbType.Integer) { Value = record.OfficeCountryId },
                 new NpgsqlParameter($"@{paramPrefix}_office_city", NpgsqlTypes.NpgsqlDbType.Text) { Value = record.OfficeCity },
                 new NpgsqlParameter($"@{paramPrefix}_office_state", NpgsqlTypes.NpgsqlDbType.Text) { Value = record.OfficeState },
-                new NpgsqlParameter($"@{paramPrefix}_company_id", NpgsqlTypes.NpgsqlDbType.Integer) { Value = record.CompanyId.HasValue ? record.CompanyId.Value : DBNull.Value },
+                new NpgsqlParameter($"@{paramPrefix}_company_id", NpgsqlTypes.NpgsqlDbType.Integer) { Value = record.CompanyId },
                 new NpgsqlParameter($"@{paramPrefix}_supplier_group_id", NpgsqlTypes.NpgsqlDbType.Integer) { Value = record.SupplierGroupId.HasValue ? record.SupplierGroupId.Value : DBNull.Value },
                 new NpgsqlParameter($"@{paramPrefix}_created_by", NpgsqlTypes.NpgsqlDbType.Integer) { Value = 0 },
                 new NpgsqlParameter($"@{paramPrefix}_created_date", NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = now },
@@ -545,10 +545,10 @@ public class SupplierMasterMigration : MigrationService
         public string MobileNumber1 { get; set; } = "";
         public string MobileNumber2 { get; set; } = "";
         public string PrimaryEmailId { get; set; } = "";
-        public int? OfficeCountryId { get; set; }
+        public int OfficeCountryId { get; set; }
         public string OfficeCity { get; set; } = "";
         public string OfficeState { get; set; } = "";
-        public int? CompanyId { get; set; }
+        public int CompanyId { get; set; }
         public int? SupplierGroupId { get; set; }
         public string Status { get; set; } = "";
     }
