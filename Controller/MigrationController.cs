@@ -31,6 +31,8 @@ public class MigrationController : Controller
     private readonly PurchaseOrganizationMasterMigration _purchaseOrganizationMigration;
     private readonly ValuationTypeMasterMigration _valuationTypeMigration;
     private readonly TypeOfCategoryMasterMigration _typeOfCategoryMigration;
+    private readonly SupplierGroupMasterMigration _supplierGroupMigration;
+    private readonly SupplierMasterMigration _supplierMigration;
 
 
     public MigrationController(
@@ -53,7 +55,9 @@ public class MigrationController : Controller
         CompanyMasterMigration companyMasterMigration,
         PurchaseOrganizationMasterMigration purchaseOrganizationMigration,
         ValuationTypeMasterMigration valuationTypeMigration,
-        TypeOfCategoryMasterMigration typeOfCategoryMigration)
+        TypeOfCategoryMasterMigration typeOfCategoryMigration,
+        SupplierGroupMasterMigration supplierGroupMigration,
+        SupplierMasterMigration supplierMigration)
     {
         _uomMigration = uomMigration;
         _plantMigration = plantMigration;
@@ -75,6 +79,8 @@ public class MigrationController : Controller
         _purchaseOrganizationMigration = purchaseOrganizationMigration;
         _valuationTypeMigration = valuationTypeMigration;
         _typeOfCategoryMigration = typeOfCategoryMigration;
+        _supplierGroupMigration = supplierGroupMigration;
+        _supplierMigration = supplierMigration;
     }
 
     public IActionResult Index()
@@ -107,6 +113,8 @@ public class MigrationController : Controller
             new { name = "purchaseorganization", description = "TBL_PurchaseOrgMaster to purchase_organization_master" },
             new { name = "valuationtype", description = "tbl_ValuationMaster to valuation_type_master" },
             new { name = "typeofcategory", description = "TBL_TypeOfCategory to type_of_category_master" },
+            new { name = "suppliergroup", description = "TBL_VendorGroupMaster to supplier_groupmaster" },
+            new { name = "supplier", description = "TBL_VENDORMASTERNEW to supplier_master" },
         };
         return Json(tables);
     }
@@ -207,6 +215,16 @@ public class MigrationController : Controller
         else if (table.ToLower() == "typeofcategory")
         {
             var mappings = _typeOfCategoryMigration.GetMappings();
+            return Json(mappings);
+        }
+        else if (table.ToLower() == "suppliergroup")
+        {
+            var mappings = _supplierGroupMigration.GetMappings();
+            return Json(mappings);
+        }
+        else if (table.ToLower() == "supplier")
+        {
+            var mappings = _supplierMigration.GetMappings();
             return Json(mappings);
         }
         return Json(new List<object>());
@@ -355,6 +373,14 @@ public class MigrationController : Controller
             else if (request.Table.ToLower() == "typeofcategory")
             {
                 recordCount = await _typeOfCategoryMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "suppliergroup")
+            {
+                recordCount = await _supplierGroupMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "supplier")
+            {
+                recordCount = await _supplierMigration.MigrateAsync();
             }
             else
             {

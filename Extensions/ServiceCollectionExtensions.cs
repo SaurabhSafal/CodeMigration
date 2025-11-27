@@ -26,6 +26,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<PurchaseOrganizationMasterMigration>();
         services.AddScoped<ValuationTypeMasterMigration>();
         services.AddScoped<TypeOfCategoryMasterMigration>();
+        services.AddScoped<SupplierGroupMasterMigration>();
+        services.AddScoped<SupplierMasterMigration>();
 
         return services;
     }
