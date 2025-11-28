@@ -345,7 +345,8 @@ public class SupplierMasterMigration : MigrationService
             var vendorId = reader.IsDBNull(reader.GetOrdinal("VendorID")) ? 0 : Convert.ToInt32(reader["VendorID"]);
             var vendorCode = reader.IsDBNull(reader.GetOrdinal("VendorCode")) ? "" : reader["VendorCode"].ToString();
             var vendorName = reader.IsDBNull(reader.GetOrdinal("VendorName")) ? "" : reader["VendorName"].ToString();
-            var vendorType = reader.IsDBNull(reader.GetOrdinal("VendorType")) ? "" : reader["VendorType"].ToString();
+            // VendorType should show StatusVendor value
+            var vendorType = reader.IsDBNull(reader.GetOrdinal("StatusVendor")) ? "" : reader["StatusVendor"].ToString();
             var contactPerson = reader.IsDBNull(reader.GetOrdinal("Primary_Contact_Person")) ? "" : reader["Primary_Contact_Person"].ToString();
             var panNo = reader.IsDBNull(reader.GetOrdinal("PANNo")) ? "" : reader["PANNo"].ToString();
             var gstNo = reader.IsDBNull(reader.GetOrdinal("GSTNo")) ? "" : reader["GSTNo"].ToString();
@@ -357,9 +358,14 @@ public class SupplierMasterMigration : MigrationService
             var officeCountryId = reader.IsDBNull(reader.GetOrdinal("OfficeCountryID")) ? 1 : Convert.ToInt32(reader["OfficeCountryID"]); // Default to India (1)
             var officeCity = reader.IsDBNull(reader.GetOrdinal("OfficeCity")) ? "" : reader["OfficeCity"].ToString();
             var stateId = reader.IsDBNull(reader.GetOrdinal("StateID")) ? "" : reader["StateID"].ToString();
-            var clientSapId = reader.IsDBNull(reader.GetOrdinal("ClientSAPId")) ? 1 : Convert.ToInt32(reader["ClientSAPId"]); // Default to company 1
+            var clientSapId = reader.IsDBNull(reader.GetOrdinal("ClientSAPId")) ? 1 : Convert.ToInt32(reader["ClientSAPId"]);
+            if (clientSapId == 0)
+            {
+                clientSapId = 1;
+            }
             var vendorGroupId = reader.IsDBNull(reader.GetOrdinal("VendorGroupId")) ? (int?)null : Convert.ToInt32(reader["VendorGroupId"]);
-            var statusVendor = reader.IsDBNull(reader.GetOrdinal("StatusVendor")) ? "" : reader["StatusVendor"].ToString();
+            // Status field should always be 'Active'
+            var statusVendor = "Active";
 
             // Validate required fields
             if (vendorId == 0)
@@ -373,7 +379,7 @@ public class SupplierMasterMigration : MigrationService
                 SupplierId = vendorId,
                 SupplierCode = vendorCode ?? "",
                 SupplierName = vendorName ?? "",
-                SupplierType = vendorType ?? "",
+                SupplierType = vendorType ?? "", // Now shows StatusVendor value
                 ContactName = contactPerson ?? "",
                 PanCardNumber = panNo ?? "",
                 GstNumber = gstNo ?? "",
@@ -387,7 +393,7 @@ public class SupplierMasterMigration : MigrationService
                 OfficeState = stateId ?? "",
                 CompanyId = clientSapId,
                 SupplierGroupId = vendorGroupId,
-                Status = statusVendor ?? ""
+                Status = statusVendor // Always 'Active'
             };
         }
         catch (Exception ex)
