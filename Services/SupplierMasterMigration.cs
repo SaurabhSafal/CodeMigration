@@ -163,7 +163,8 @@ public class SupplierMasterMigration : MigrationService
             new { source = "VendorID", logic = "VendorID -> supplier_id (Direct)", target = "supplier_id" },
             new { source = "VendorCode", logic = "VendorCode -> supplier_code (Direct)", target = "supplier_code" },
             new { source = "VendorName", logic = "VendorName -> supplier_name (Direct)", target = "supplier_name" },
-            new { source = "VendorType", logic = "VendorType -> supplier_type (Direct)", target = "supplier_type" },
+            // VendorType should map StatusVendor to supplier_type
+            new { source = "StatusVendor", logic = "StatusVendor -> supplier_type (From StatusVendor)", target = "supplier_type" },
             new { source = "Primary_Contact_Person", logic = "Primary_Contact_Person -> contact_name (Direct)", target = "contact_name" },
             new { source = "PANNo", logic = "PANNo -> pan_card_number (Direct)", target = "pan_card_number" },
             new { source = "GSTNo", logic = "GSTNo -> gst_number (Direct)", target = "gst_number" },
@@ -177,7 +178,8 @@ public class SupplierMasterMigration : MigrationService
             new { source = "StateID", logic = "StateID -> office_state (Convert to text)", target = "office_state" },
             new { source = "ClientSAPId", logic = "ClientSAPId -> company_id (FK to company_master, defaults to 1 if NULL)", target = "company_id" },
             new { source = "VendorGroupId", logic = "VendorGroupId -> supplier_group_id (FK to supplier_groupmaster)", target = "supplier_group_id" },
-            new { source = "StatusVendor", logic = "StatusVendor -> status (Direct)", target = "status" },
+            // Status should always be 'Active' (Fixed Default)
+            new { source = "-", logic = "status -> 'Active' (Fixed Default)", target = "status" },
             new { source = "-", logic = "created_by -> 0 (Fixed Default)", target = "created_by" },
             new { source = "-", logic = "created_date -> NOW() (Generated)", target = "created_date" },
             new { source = "-", logic = "modified_by -> NULL (Fixed Default)", target = "modified_by" },
@@ -345,7 +347,7 @@ public class SupplierMasterMigration : MigrationService
             var vendorId = reader.IsDBNull(reader.GetOrdinal("VendorID")) ? 0 : Convert.ToInt32(reader["VendorID"]);
             var vendorCode = reader.IsDBNull(reader.GetOrdinal("VendorCode")) ? "" : reader["VendorCode"].ToString();
             var vendorName = reader.IsDBNull(reader.GetOrdinal("VendorName")) ? "" : reader["VendorName"].ToString();
-            // VendorType should show StatusVendor value
+            // VendorType should show StatusVendor value from MSSQL column
             var vendorType = reader.IsDBNull(reader.GetOrdinal("StatusVendor")) ? "" : reader["StatusVendor"].ToString();
             var contactPerson = reader.IsDBNull(reader.GetOrdinal("Primary_Contact_Person")) ? "" : reader["Primary_Contact_Person"].ToString();
             var panNo = reader.IsDBNull(reader.GetOrdinal("PANNo")) ? "" : reader["PANNo"].ToString();
@@ -364,8 +366,8 @@ public class SupplierMasterMigration : MigrationService
                 clientSapId = 1;
             }
             var vendorGroupId = reader.IsDBNull(reader.GetOrdinal("VendorGroupId")) ? (int?)null : Convert.ToInt32(reader["VendorGroupId"]);
-            // Status field should always be 'Active'
-            var statusVendor = "Active";
+            // Status field should always be 'Active' in Postgres
+            var status = "Active";
 
             // Validate required fields
             if (vendorId == 0)
@@ -393,7 +395,7 @@ public class SupplierMasterMigration : MigrationService
                 OfficeState = stateId ?? "",
                 CompanyId = clientSapId,
                 SupplierGroupId = vendorGroupId,
-                Status = statusVendor // Always 'Active'
+                Status = status // Always 'Active'
             };
         }
         catch (Exception ex)
