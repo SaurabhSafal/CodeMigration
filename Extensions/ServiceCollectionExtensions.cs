@@ -22,6 +22,12 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ErpPrLinesMigration>();
         services.AddScoped<PODocTypeMasterMigration>();
         services.AddScoped<POConditionMasterMigration>();
+        services.AddScoped<WorkflowMasterMigration>();
+        services.AddScoped<WorkflowMasterHistoryMigration>();
+        services.AddScoped<WorkflowAmountMigration>();
+        services.AddScoped<WorkflowAmountHistoryMigration>();
+        services.AddScoped<WorkflowApprovalUserMigration>();
+        services.AddScoped<WorkflowApprovalUserHistoryMigration>();
 
         return services;
     }
