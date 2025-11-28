@@ -6,9 +6,18 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddMigrationServices(this IServiceCollection services)
     {
+        services.AddScoped<TypeOfCategoryMasterMigration>();
+        services.AddScoped<SupplierGroupMasterMigration>();
+        services.AddScoped<SupplierMasterMigration>();
+        services.AddScoped<ValuationTypeMasterMigration>();
+        services.AddScoped<PurchaseOrganizationMasterMigration>();
+        services.AddScoped<CompanyMasterMigration>();
+        // services.AddScoped<ARCMainMigration>(); // Already registered above
+        services.AddScoped<TaxCodeMasterMigration>();
         // Register migration services
         services.AddScoped<UOMMasterMigration>();
         services.AddScoped<PlantMasterMigration>();
+        services.AddScoped<ARCMainMigration>();
         services.AddScoped<CurrencyMasterMigration>();
         services.AddScoped<CountryMasterMigration>();
         services.AddScoped<MaterialGroupMasterMigration>();

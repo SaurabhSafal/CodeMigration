@@ -44,7 +44,7 @@ public class MigrationController : Controller
 
 
     public MigrationController(
-        UOMMasterMigration uomMigration, 
+        UOMMasterMigration uomMigration,
         PlantMasterMigration plantMigration,
         CurrencyMasterMigration currencyMigration,
         CountryMasterMigration countryMigration,
@@ -65,7 +65,16 @@ public class MigrationController : Controller
         WorkflowAmountHistoryMigration workflowAmountHistoryMigration,
         WorkflowApprovalUserMigration workflowApprovalUserMigration,
         WorkflowApprovalUserHistoryMigration workflowApprovalUserHistoryMigration,
-        IHubContext<MigrationProgressHub> hubContext)
+        IHubContext<MigrationProgressHub> hubContext,
+        ARCMainMigration arcMainMigration,
+        TaxCodeMasterMigration taxCodeMasterMigration,
+        CompanyMasterMigration companyMasterMigration,
+        PurchaseOrganizationMasterMigration purchaseOrganizationMigration,
+        ValuationTypeMasterMigration valuationTypeMigration,
+        TypeOfCategoryMasterMigration typeOfCategoryMigration,
+        SupplierGroupMasterMigration supplierGroupMigration,
+        SupplierMasterMigration supplierMigration
+    )
     {
         _uomMigration = uomMigration;
         _plantMigration = plantMigration;
@@ -121,6 +130,13 @@ public class MigrationController : Controller
             new { name = "material", description = "TBL_ITEMMASTER to material_master" },
             new { name = "eventmaster", description = "TBL_EVENTMASTER to event_master + event_setting" },
             new { name = "tax", description = "TBL_TaxMaster to tax_master" },
+            new { name = "taxcode", description = "TBL_TaxCodeMaster to tax_code_master" },
+            new { name = "company", description = "TBL_CompanyMaster to company_master" },
+            new { name = "arcmain", description = "TBL_ARCMain to arc_main" },
+            new { name = "valuationtype", description = "TBL_ValuationTypeMaster to valuation_type_master" },
+            new { name = "typeofcategory", description = "TBL_TypeOfCategoryMaster to type_of_category_master" },
+            new { name = "suppliergroup", description = "TBL_SupplierGroupMaster to supplier_group_master" },
+            new { name = "supplier", description = "TBL_SupplierMaster to supplier_master" },
             new { name = "users", description = "TBL_USERMASTERFINAL to users" },
             new { name = "erpprlines", description = "TBL_PRTRANSACTION to erp_pr_lines" },
             new { name = "podoctype", description = "TBL_PO_DOC_TYPE to po_doc_type_master" },
@@ -129,8 +145,8 @@ public class MigrationController : Controller
             new { name = "workflowhistory", description = "TBL_WorkFlowMain_History to workflow_master_history" },
             new { name = "workflowamount", description = "TBL_WorkFlowSub to workflow_amount" },
             new { name = "workflowamounthistory", description = "TBL_WorkFlowSub_History to workflow_amount_history" },
-            new { name = "workflowapprovaluser", description = "TBL_WorkFlowSubSub to workflow_approval_user" },
-            new { name = "workflowapprovaluserhistory", description = "TBL_WorkFlowSubSub_History to workflow_approval_user_history" },
+            new { name = "workflowapprovaluser", description = "TBL_WorkflowApprovalUser to workflow_approval_user" },
+            new { name = "workflowapprovaluserhistory", description = "TBL_WorkflowApprovalUserHistory to workflow_approval_user_history" }
         };
         return Json(tables);
     }
