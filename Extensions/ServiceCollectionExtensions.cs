@@ -6,6 +6,9 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddMigrationServices(this IServiceCollection services)
     {
+        services.AddScoped<SupplierOtherContactMigration>();
+    
+        services.AddScoped<SupplierInactiveMigration>();
         services.AddScoped<SupplierPaymentIncotermMigration>();
         services.AddScoped<TypeOfCategoryMasterMigration>();
         services.AddScoped<SupplierGroupMasterMigration>();

@@ -43,6 +43,8 @@ public class MigrationController : Controller
     private readonly SupplierMasterMigration _supplierMigration;
 
     private readonly SupplierPaymentIncotermMigration _supplierPaymentIncotermMigration;
+    private readonly SupplierInactiveMigration _supplierInactiveMigration;
+    private readonly SupplierOtherContactMigration _supplierOtherContactMigration;
 
 
     public MigrationController(
@@ -76,7 +78,9 @@ public class MigrationController : Controller
         TypeOfCategoryMasterMigration typeOfCategoryMigration,
         SupplierGroupMasterMigration supplierGroupMigration,
         SupplierMasterMigration supplierMigration,
-        SupplierPaymentIncotermMigration supplierPaymentIncotermMigration
+        SupplierPaymentIncotermMigration supplierPaymentIncotermMigration,
+        SupplierInactiveMigration supplierInactiveMigration,
+        SupplierOtherContactMigration supplierOtherContactMigration
     )
     {
         _uomMigration = uomMigration;
@@ -110,6 +114,8 @@ public class MigrationController : Controller
         _supplierGroupMigration = supplierGroupMigration;
         _supplierMigration = supplierMigration;
         _supplierPaymentIncotermMigration = supplierPaymentIncotermMigration;
+        _supplierInactiveMigration = supplierInactiveMigration;
+        _supplierOtherContactMigration = supplierOtherContactMigration;
         
     }
 
@@ -143,6 +149,8 @@ public class MigrationController : Controller
             new { name = "suppliergroup", description = "TBL_SupplierGroupMaster to supplier_group_master" },
             new { name = "supplier", description = "TBL_SupplierMaster to supplier_master" },
             new { name = "supplierpaymentincoterm", description = "TBL_Vendor_Pay_Inco_Terms to supplier_payment_incoterm" },
+            new { name = "supplierinactive", description = "TBL_VendorInactive to supplier_inactive" },
+            new { name = "supplierothercontact", description = "TBL_COMUNICATION to supplier_other_contact" },
             new { name = "users", description = "TBL_USERMASTERFINAL to users" },
             new { name = "erpprlines", description = "TBL_PRTRANSACTION to erp_pr_lines" },
             new { name = "podoctype", description = "TBL_PO_DOC_TYPE to po_doc_type_master" },
@@ -265,6 +273,16 @@ public class MigrationController : Controller
             var mappings = _supplierMigration.GetMappings();
             return Json(mappings);
         }
+        else if (table.ToLower() == "supplierothercontact")
+        {
+            var mappings = _supplierOtherContactMigration.GetMappings();
+            return Json(mappings);
+        }
+        else if (table.ToLower() == "supplierinactive")
+        {
+            var mappings = _supplierInactiveMigration.GetMappings();
+            return Json(mappings);
+        }
         else if (table.ToLower() == "workflow")
         {
             var mappings = _workflowMigration.GetMappings();
@@ -341,6 +359,14 @@ public class MigrationController : Controller
             else if (request.Table.ToLower() == "incoterm")
             {
                 recordCount = await _incotermMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "supplierothercontact")
+            {
+                recordCount = await _supplierOtherContactMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "supplierinactive")
+            {
+                recordCount = await _supplierInactiveMigration.MigrateAsync();
             }
             else if (request.Table.ToLower() == "material")
             {
@@ -482,6 +508,10 @@ public class MigrationController : Controller
             else if (request.Table.ToLower() == "supplierpaymentincoterm")
             {
                 recordCount = await _supplierPaymentIncotermMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "supplierinactive")
+            {
+                recordCount = await _supplierInactiveMigration.MigrateAsync();
             }
             else
             {
@@ -953,6 +983,22 @@ public class MigrationController : Controller
         {
             return Json(new { success = false, error = ex.Message });
         }
+    }
+
+    [HttpPost]
+    [Route("MigrateSupplierInactive")]
+    public async Task<IActionResult> MigrateSupplierInactive()
+    {
+        int migrated = await _supplierInactiveMigration.MigrateAsync();
+        return Ok(new { migrated });
+    }
+
+    [HttpPost]
+    [Route("MigrateSupplierOtherContact")]
+    public async Task<IActionResult> MigrateSupplierOtherContact()
+    {
+        int migrated = await _supplierOtherContactMigration.MigrateAsync();
+        return Ok(new { migrated });
     }
 }
 public class MigrationRequest
