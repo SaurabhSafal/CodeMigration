@@ -16,7 +16,7 @@ public class ErpPrLinesMigration : MigrationService
 SELECT
     t.PRTRANSID,
     pm.IsNumberGeneration AS temp_pr,
-    t.BUYERID AS user_id,
+    CASE WHEN u.PERSON_ID IS NOT NULL AND t.BUYERID <> 0 THEN t.BUYERID ELSE NULL END AS user_id,
     u.FULL_NAME AS user_full_name,
     t.PRStatus AS pr_status,
     pm.PR_NUM AS pr_number,
@@ -113,6 +113,19 @@ INSERT INTO erp_pr_lines (
         _logger = logger;
     }
 
+    private async Task<HashSet<int>> LoadValidUomIdsAsync(NpgsqlConnection pgConn, NpgsqlTransaction? transaction)
+    {
+        var validIds = new HashSet<int>();
+        var query = "SELECT uom_id FROM uom_master";
+        using var cmd = new NpgsqlCommand(query, pgConn, transaction);
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            validIds.Add(reader.GetInt32(0));
+        }
+        return validIds;
+    }
+
     protected override List<string> GetLogics() => new List<string>
     {
         "Direct", // erp_pr_lines_id
@@ -190,7 +203,12 @@ INSERT INTO erp_pr_lines (
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        // Load valid UOM IDs
+        var validUomIds = await LoadValidUomIdsAsync(pgConn, transaction);
+        _logger.LogInformation($"Loaded {validUomIds.Count} valid UOM IDs from uom_master.");
+        
         int insertedCount = 0;
+        int skippedCount = 0;
         int batchNumber = 0;
         var batch = new List<Dictionary<string, object>>();
         
@@ -199,6 +217,29 @@ INSERT INTO erp_pr_lines (
         
         while (await reader.ReadAsync())
         {
+            // Validate UOM ID
+            var uomIdValue = reader["uom_id"];
+            if (uomIdValue != DBNull.Value)
+            {
+                int uomId = Convert.ToInt32(uomIdValue);
+                
+                // Skip if UOM ID is 0
+                if (uomId == 0)
+                {
+                    _logger.LogWarning($"Skipping PRTRANSID {reader["PRTRANSID"]}: UOM ID is 0.");
+                    skippedCount++;
+                    continue;
+                }
+                
+                // Skip if UOM ID not present in uom_master
+                if (!validUomIds.Contains(uomId))
+                {
+                    _logger.LogWarning($"Skipping PRTRANSID {reader["PRTRANSID"]}: UOM ID {uomId} not found in uom_master.");
+                    skippedCount++;
+                    continue;
+                }
+            }
+            
             var record = new Dictionary<string, object>
             {
                 ["erp_pr_lines_id"] = reader["PRTRANSID"] ?? DBNull.Value,
@@ -289,7 +330,7 @@ INSERT INTO erp_pr_lines (
             _logger.LogInformation($"Completed batch {batchNumber}. Total records inserted so far: {insertedCount}");
         }
         
-        _logger.LogInformation($"Migration finished. Total records inserted: {insertedCount}");
+        _logger.LogInformation($"Migration finished. Total records inserted: {insertedCount}, Skipped: {skippedCount}");
         return insertedCount;
     }
 
