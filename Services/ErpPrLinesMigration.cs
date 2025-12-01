@@ -4,9 +4,13 @@ using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 public class ErpPrLinesMigration : MigrationService
 {
+    private const int BATCH_SIZE = 100; // Reduced to avoid 65535 parameter limit (67 columns x 100 rows = 6700 parameters)
+    private readonly ILogger<ErpPrLinesMigration> _logger;
+
     // 1. The SQL query covers all fields and lookups as per your mapping.
     protected override string SelectQuery => @"
 SELECT
@@ -68,17 +72,18 @@ SELECT
     pm.RequestBy AS erp_request_by,
     t.RequestDate AS erp_change_on_date,
     t.DeliveryDate AS delivery_date,
-    t.is_closed,
-    t.created_by,
-    t.created_date,
-    t.modified_by,
-    t.modified_date,
-    CASE WHEN t.DeletionIndicator = 'X' THEN TRUE ELSE FALSE END AS is_deleted,
-    t.deleted_by,
-    t.deleted_date
+    0 AS is_closed,
+    0 AS created_by,
+    NULL AS created_date,
+    0 AS modified_by,
+    NULL AS modified_date,
+    CASE WHEN t.DeletionIndicator = 'X' THEN 1 ELSE 0 END AS is_deleted,
+    NULL AS deleted_by,
+    NULL AS deleted_date
 FROM TBL_PRTRANSACTION t
-LEFT JOIN TBL_PRMASTER pm ON pm.PRID = t.PRID
+INNER JOIN TBL_PRMASTER pm ON pm.PRID = t.PRID
 LEFT JOIN TBL_USERMASTERFINAL u ON u.PERSON_ID = t.BUYERID
+WHERE ISNULL(pm.PR_NUM, '') <> ''
 ";
 
     // 2. The Postgres insert covers all fields as per your mapping
@@ -103,7 +108,10 @@ INSERT INTO erp_pr_lines (
     @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date
 )";
 
-    public ErpPrLinesMigration(IConfiguration configuration) : base(configuration) { }
+    public ErpPrLinesMigration(IConfiguration configuration, ILogger<ErpPrLinesMigration> logger) : base(configuration) 
+    {
+        _logger = logger;
+    }
 
     protected override List<string> GetLogics() => new List<string>
     {
@@ -182,90 +190,149 @@ INSERT INTO erp_pr_lines (
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
-        using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
-        using var reader = await sqlCmd.ExecuteReaderAsync();
-        using var pgCmd = new NpgsqlCommand(InsertQuery, pgConn);
-        if (transaction != null)
-        {
-            pgCmd.Transaction = transaction;
-        }
-
         int insertedCount = 0;
+        int batchNumber = 0;
+        var batch = new List<Dictionary<string, object>>();
+        
+        using var selectCmd = new SqlCommand(SelectQuery, sqlConn);
+        using var reader = await selectCmd.ExecuteReaderAsync();
+        
         while (await reader.ReadAsync())
         {
-            pgCmd.Parameters.Clear();
-
-            pgCmd.Parameters.AddWithValue("@erp_pr_lines_id", reader["PRTRANSID"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@temp_pr", reader["temp_pr"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@user_id", reader["user_id"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@user_full_name", reader["user_full_name"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@pr_status", reader["pr_status"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@pr_number", reader["pr_number"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@pr_line", reader["pr_line"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@header_text", reader["header_text"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@company_id", reader["company_id"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@company_code", reader["company_code"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@uom_id", reader["uom_id"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@uom_code", reader["uom_code"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@plant_id", reader["plant_id"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@plant_code", reader["plant_code"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@material_group_id", reader["material_group_id"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@material_group_code", reader["material_group_code"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@purchase_group_id", reader["purchase_group_id"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@purchase_group_code", reader["purchase_group_code"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@material_code", reader["material_code"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@material_short_text", reader["material_short_text"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@material_item_text", reader["material_item_text"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@item_type", reader["item_type"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@material_po_description", reader["material_po_description"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@amount", reader["amount"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@unit_price", reader["unit_price"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@rem_qty", reader["rem_qty"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@qty", reader["qty"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@po_number", reader["po_number"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@po_creation_date", reader["po_creation_date"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@po_qty", reader["po_qty"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@po_vendor_code", reader["po_vendor_code"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@po_vendor_name", reader["po_vendor_name"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@po_item_value", reader["po_item_value"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@lpo_number", reader["lpo_number"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@lpo_line_number", reader["lpo_line_number"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@lpo_doc_type", reader["lpo_doc_type"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@lpo_creation_date", reader["lpo_creation_date"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@lpo_uom", reader["lpo_uom"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@lpo_unit_price", reader["lpo_unit_price"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@lpo_line_currency", reader["lpo_line_currency"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@lpo_vendor_code", reader["lpo_vendor_code"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@lpo_vendor_name", reader["lpo_vendor_name"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@lpo_date", reader["lpo_date"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@lpo_qty", reader["lpo_qty"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@total_stock", reader["total_stock"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@cost_center", reader["cost_center"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@store_location", reader["store_location"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@department", reader["department"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@acct_assignment_cat", reader["acct_assignment_cat"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@acct_assignment_cat_desc", reader["acct_assignment_cat_desc"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@wbs_element_code", reader["wbs_element_code"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@wbs_element_name", reader["wbs_element_name"] ?? DBNull.Value); // Null by default
-            pgCmd.Parameters.AddWithValue("@currency_code", reader["currency_code"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@tracking_number", reader["tracking_number"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@erp_created_by", reader["erp_created_by"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@erp_request_by", reader["erp_request_by"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@erp_change_on_date", reader["erp_change_on_date"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@delivery_date", reader["delivery_date"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@is_closed", reader["is_closed"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@created_by", reader["created_by"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@created_date", reader["created_date"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@modified_by", reader["modified_by"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@modified_date", reader["modified_date"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@is_deleted", reader["is_deleted"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@deleted_by", reader["deleted_by"] ?? DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@deleted_date", reader["deleted_date"] ?? DBNull.Value);
-
-            int result = await pgCmd.ExecuteNonQueryAsync();
-            if (result > 0)
-                insertedCount++;
+            var record = new Dictionary<string, object>
+            {
+                ["erp_pr_lines_id"] = reader["PRTRANSID"] ?? DBNull.Value,
+                ["temp_pr"] = reader["temp_pr"] ?? DBNull.Value,
+                ["user_id"] = reader["user_id"] ?? DBNull.Value,
+                ["user_full_name"] = reader["user_full_name"] ?? DBNull.Value,
+                ["pr_status"] = reader["pr_status"] ?? DBNull.Value,
+                ["pr_number"] = reader["pr_number"] ?? DBNull.Value,
+                ["pr_line"] = reader["pr_line"] ?? DBNull.Value,
+                ["header_text"] = reader["header_text"] ?? DBNull.Value,
+                ["company_id"] = reader["company_id"] ?? DBNull.Value,
+                ["company_code"] = reader["company_code"] ?? DBNull.Value,
+                ["uom_id"] = reader["uom_id"] ?? DBNull.Value,
+                ["uom_code"] = reader["uom_code"] ?? DBNull.Value,
+                ["plant_id"] = reader["plant_id"] ?? DBNull.Value,
+                ["plant_code"] = reader["plant_code"] ?? DBNull.Value,
+                ["material_group_id"] = reader["material_group_id"] ?? DBNull.Value,
+                ["material_group_code"] = reader["material_group_code"] ?? DBNull.Value,
+                ["purchase_group_id"] = reader["purchase_group_id"] ?? DBNull.Value,
+                ["purchase_group_code"] = reader["purchase_group_code"] ?? DBNull.Value,
+                ["material_code"] = reader["material_code"] ?? DBNull.Value,
+                ["material_short_text"] = reader["material_short_text"] ?? DBNull.Value,
+                ["material_item_text"] = reader["material_item_text"] ?? DBNull.Value,
+                ["item_type"] = reader["item_type"] ?? DBNull.Value,
+                ["material_po_description"] = reader["material_po_description"] ?? DBNull.Value,
+                ["amount"] = reader["amount"] ?? DBNull.Value,
+                ["unit_price"] = reader["unit_price"] ?? DBNull.Value,
+                ["rem_qty"] = reader["rem_qty"] ?? DBNull.Value,
+                ["qty"] = reader["qty"] ?? DBNull.Value,
+                ["po_number"] = reader["po_number"] ?? DBNull.Value,
+                ["po_creation_date"] = reader["po_creation_date"] ?? DBNull.Value,
+                ["po_qty"] = reader["po_qty"] ?? DBNull.Value,
+                ["po_vendor_code"] = reader["po_vendor_code"] ?? DBNull.Value,
+                ["po_vendor_name"] = reader["po_vendor_name"] ?? DBNull.Value,
+                ["po_item_value"] = reader["po_item_value"] ?? DBNull.Value,
+                ["lpo_number"] = reader["lpo_number"] ?? DBNull.Value,
+                ["lpo_line_number"] = reader["lpo_line_number"] ?? DBNull.Value,
+                ["lpo_doc_type"] = reader["lpo_doc_type"] ?? DBNull.Value,
+                ["lpo_creation_date"] = reader["lpo_creation_date"] ?? DBNull.Value,
+                ["lpo_uom"] = reader["lpo_uom"] ?? DBNull.Value,
+                ["lpo_unit_price"] = reader["lpo_unit_price"] ?? DBNull.Value,
+                ["lpo_line_currency"] = reader["lpo_line_currency"] ?? DBNull.Value,
+                ["lpo_vendor_code"] = reader["lpo_vendor_code"] ?? DBNull.Value,
+                ["lpo_vendor_name"] = reader["lpo_vendor_name"] ?? DBNull.Value,
+                ["lpo_date"] = reader["lpo_date"] ?? DBNull.Value,
+                ["lpo_qty"] = reader["lpo_qty"] ?? DBNull.Value,
+                ["total_stock"] = reader["total_stock"] ?? DBNull.Value,
+                ["cost_center"] = reader["cost_center"] ?? DBNull.Value,
+                ["store_location"] = reader["store_location"] ?? DBNull.Value,
+                ["department"] = reader["department"] ?? DBNull.Value,
+                ["acct_assignment_cat"] = reader["acct_assignment_cat"] ?? DBNull.Value,
+                ["acct_assignment_cat_desc"] = reader["acct_assignment_cat_desc"] ?? DBNull.Value,
+                ["wbs_element_code"] = reader["wbs_element_code"] ?? DBNull.Value,
+                ["wbs_element_name"] = reader["wbs_element_name"] ?? DBNull.Value,
+                ["currency_code"] = reader["currency_code"] ?? DBNull.Value,
+                ["tracking_number"] = reader["tracking_number"] ?? DBNull.Value,
+                ["erp_created_by"] = reader["erp_created_by"] ?? DBNull.Value,
+                ["erp_request_by"] = reader["erp_request_by"] ?? DBNull.Value,
+                ["erp_change_on_date"] = reader["erp_change_on_date"] ?? DBNull.Value,
+                ["delivery_date"] = reader["delivery_date"] ?? DBNull.Value,
+                ["is_closed"] = Convert.ToInt32(reader["is_closed"]) == 1,
+                ["created_by"] = reader["created_by"] ?? DBNull.Value,
+                ["created_date"] = reader["created_date"] ?? DBNull.Value,
+                ["modified_by"] = reader["modified_by"] ?? DBNull.Value,
+                ["modified_date"] = reader["modified_date"] ?? DBNull.Value,
+                ["is_deleted"] = Convert.ToInt32(reader["is_deleted"]) == 1,
+                ["deleted_by"] = reader["deleted_by"] ?? DBNull.Value,
+                ["deleted_date"] = reader["deleted_date"] ?? DBNull.Value
+            };
+            
+            batch.Add(record);
+            
+            if (batch.Count >= BATCH_SIZE)
+            {
+                batchNumber++;
+                _logger.LogInformation($"Starting batch {batchNumber} with {batch.Count} records...");
+                insertedCount += await InsertBatchAsync(pgConn, batch, transaction, batchNumber);
+                _logger.LogInformation($"Completed batch {batchNumber}. Total records inserted so far: {insertedCount}");
+                batch.Clear();
+            }
         }
+        
+        if (batch.Count > 0)
+        {
+            batchNumber++;
+            _logger.LogInformation($"Starting batch {batchNumber} with {batch.Count} records...");
+            insertedCount += await InsertBatchAsync(pgConn, batch, transaction, batchNumber);
+            _logger.LogInformation($"Completed batch {batchNumber}. Total records inserted so far: {insertedCount}");
+        }
+        
+        _logger.LogInformation($"Migration finished. Total records inserted: {insertedCount}");
         return insertedCount;
+    }
+
+    private async Task<int> InsertBatchAsync(NpgsqlConnection pgConn, List<Dictionary<string, object>> batch, NpgsqlTransaction? transaction, int batchNumber)
+    {
+        if (batch.Count == 0) return 0;
+        
+        var columns = new List<string> {
+            "erp_pr_lines_id", "temp_pr", "user_id", "user_full_name", "pr_status", "pr_number", "pr_line", "header_text", 
+            "company_id", "company_code", "uom_id", "uom_code", "plant_id", "plant_code", "material_group_id", "material_group_code", 
+            "purchase_group_id", "purchase_group_code", "material_code", "material_short_text", "material_item_text", "item_type", 
+            "material_po_description", "amount", "unit_price", "rem_qty", "qty", "po_number", "po_creation_date", "po_qty", 
+            "po_vendor_code", "po_vendor_name", "po_item_value", "lpo_number", "lpo_line_number", "lpo_doc_type", "lpo_creation_date", 
+            "lpo_uom", "lpo_unit_price", "lpo_line_currency", "lpo_vendor_code", "lpo_vendor_name", "lpo_date", "lpo_qty", 
+            "total_stock", "cost_center", "store_location", "department", "acct_assignment_cat", "acct_assignment_cat_desc", 
+            "wbs_element_code", "wbs_element_name", "currency_code", "tracking_number", "erp_created_by", "erp_request_by", 
+            "erp_change_on_date", "delivery_date", "is_closed", "created_by", "created_date", "modified_by", "modified_date", 
+            "is_deleted", "deleted_by", "deleted_date"
+        };
+        
+        var valueRows = new List<string>();
+        var parameters = new List<NpgsqlParameter>();
+        int paramIndex = 0;
+        
+        foreach (var record in batch)
+        {
+            var valuePlaceholders = new List<string>();
+            foreach (var col in columns)
+            {
+                var paramName = $"@p{paramIndex}";
+                valuePlaceholders.Add(paramName);
+                parameters.Add(new NpgsqlParameter(paramName, record[col]));
+                paramIndex++;
+            }
+            valueRows.Add($"({string.Join(", ", valuePlaceholders)})");
+        }
+        
+        var sql = $"INSERT INTO erp_pr_lines ({string.Join(", ", columns)}) VALUES {string.Join(", ", valueRows)}";
+        using var insertCmd = new NpgsqlCommand(sql, pgConn, transaction);
+        insertCmd.Parameters.AddRange(parameters.ToArray());
+        
+        int result = await insertCmd.ExecuteNonQueryAsync();
+        _logger.LogInformation($"Batch {batchNumber}: Inserted {result} records into erp_pr_lines.");
+        return result;
     }
 }

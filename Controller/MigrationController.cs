@@ -264,7 +264,7 @@ public class MigrationController : Controller
             var mappings = _usersmasterMigration.GetMappings();       
             return Json(mappings);
         }
-        else if (table.ToLower() == "erp_pr_lines")
+        else if (table.ToLower() == "erpprlines")
         {
             var mappings = _erpprlinesMigration.GetMappings();
             return Json(mappings);
@@ -501,7 +501,7 @@ public class MigrationController : Controller
             {
                 recordCount = await _usersmasterMigration.MigrateAsync();
             }
-            else if (request.Table.ToLower() == "erp_pr_lines")
+            else if (request.Table.ToLower() == "erpprlines")
             {
                 recordCount = await _erpprlinesMigration.MigrateAsync();
             }
