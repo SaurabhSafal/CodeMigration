@@ -45,6 +45,7 @@ public class MigrationController : Controller
     private readonly SupplierPaymentIncotermMigration _supplierPaymentIncotermMigration;
     private readonly SupplierInactiveMigration _supplierInactiveMigration;
     private readonly SupplierOtherContactMigration _supplierOtherContactMigration;
+    private readonly ARCSubMigration _arcSubMigration;
 
 
     public MigrationController(
@@ -80,7 +81,8 @@ public class MigrationController : Controller
         SupplierMasterMigration supplierMigration,
         SupplierPaymentIncotermMigration supplierPaymentIncotermMigration,
         SupplierInactiveMigration supplierInactiveMigration,
-        SupplierOtherContactMigration supplierOtherContactMigration
+        SupplierOtherContactMigration supplierOtherContactMigration,
+        ARCSubMigration arcSubMigration
     )
     {
         _uomMigration = uomMigration;
@@ -116,6 +118,7 @@ public class MigrationController : Controller
         _supplierPaymentIncotermMigration = supplierPaymentIncotermMigration;
         _supplierInactiveMigration = supplierInactiveMigration;
         _supplierOtherContactMigration = supplierOtherContactMigration;
+        _arcSubMigration = arcSubMigration;
         
     }
 
@@ -318,6 +321,11 @@ public class MigrationController : Controller
             var mappings = _supplierPaymentIncotermMigration.GetMappings();
             return Json(mappings);
         }
+        else if (table.ToLower() == "arcsub")
+        {
+            var mappings = _arcSubMigration.GetMappings();
+            return Json(mappings);
+        }
         return Json(new List<object>());
     }
 
@@ -509,9 +517,9 @@ public class MigrationController : Controller
             {
                 recordCount = await _supplierPaymentIncotermMigration.MigrateAsync();
             }
-            else if (request.Table.ToLower() == "supplierinactive")
+            else if (request.Table.ToLower() == "arcsub")
             {
-                recordCount = await _supplierInactiveMigration.MigrateAsync();
+                recordCount = await _arcSubMigration.MigrateAsync();
             }
             else
             {

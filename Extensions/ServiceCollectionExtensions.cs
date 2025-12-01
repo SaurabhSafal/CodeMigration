@@ -39,6 +39,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<WorkflowMasterHistoryMigration>();
         services.AddScoped<WorkflowAmountMigration>();
         services.AddScoped<WorkflowAmountHistoryMigration>();
+
+        services.AddScoped<ARCSubMigration>();
         services.AddScoped<WorkflowApprovalUserMigration>();
         services.AddScoped<WorkflowApprovalUserHistoryMigration>();
 
