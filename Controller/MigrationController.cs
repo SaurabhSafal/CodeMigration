@@ -47,6 +47,7 @@ public class MigrationController : Controller
     private readonly SupplierOtherContactMigration _supplierOtherContactMigration;
     private readonly ARCSubMigration _arcSubMigration;
     private readonly ARCPlantMigration _arcPlantMigration;
+    private readonly ARCAttachmentMigration _arcAttachmentMigration;
 
 
     public MigrationController(
@@ -84,7 +85,8 @@ public class MigrationController : Controller
         SupplierInactiveMigration supplierInactiveMigration,
         SupplierOtherContactMigration supplierOtherContactMigration,
         ARCSubMigration arcSubMigration,
-        ARCPlantMigration arcPlantMigration
+        ARCPlantMigration arcPlantMigration,
+        ARCAttachmentMigration arcAttachmentMigration
     )
     {
         _uomMigration = uomMigration;
@@ -122,12 +124,20 @@ public class MigrationController : Controller
         _supplierOtherContactMigration = supplierOtherContactMigration;
 		_arcSubMigration = arcSubMigration;
 		_arcPlantMigration = arcPlantMigration;
+		_arcAttachmentMigration = arcAttachmentMigration;
     }
 
     [HttpPost("MigrateARCPlant")]
     public async Task<IActionResult> MigrateARCPlant()
     {
         int migrated = await _arcPlantMigration.MigrateAsync();
+        return Ok(new { migrated });
+    }
+
+    [HttpPost("MigrateARCAttachment")]
+    public async Task<IActionResult> MigrateARCAttachment()
+    {
+        int migrated = await _arcAttachmentMigration.MigrateAsync();
         return Ok(new { migrated });
     }
 
@@ -158,6 +168,7 @@ public class MigrationController : Controller
             new { name = "arcmain", description = "TBL_ARCMain to arc_main" },
             new {name = "arcsub", description = "TBL_ARCSub to arc_sub" },
             new {name = "arcplant", description = "TBL_ARCPlant to arc_plant" },
+            new {name = "arcattachment", description = "TBL_ARCATTACHMENT to arc_attachments" },
             new { name = "valuationtype", description = "TBL_ValuationTypeMaster to valuation_type_master" },
             new { name = "typeofcategory", description = "TBL_TypeOfCategoryMaster to type_of_category_master" },
             new { name = "suppliergroup", description = "TBL_SupplierGroupMaster to supplier_group_master" },
@@ -340,6 +351,11 @@ public class MigrationController : Controller
         else if (table.ToLower() == "arcplant")
         {
             var mappings = _arcPlantMigration.GetMappings();
+            return Json(mappings);
+        }
+        else if (table.ToLower() == "arcattachment")
+        {
+            var mappings = _arcAttachmentMigration.GetMappings();
             return Json(mappings);
         }
         return Json(new List<object>());
@@ -540,6 +556,10 @@ public class MigrationController : Controller
             else if (request.Table.ToLower() == "arcplant")
             {
                 recordCount = await _arcPlantMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "arcattachment")
+            {
+                recordCount = await _arcAttachmentMigration.MigrateAsync();
             }
             else
             {
