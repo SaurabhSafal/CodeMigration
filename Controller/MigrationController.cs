@@ -35,6 +35,8 @@ public class MigrationController : Controller
     private readonly WorkflowApprovalUserHistoryMigration _workflowApprovalUserHistoryMigration;
     private readonly IHubContext<MigrationProgressHub> _hubContext;
     private readonly IConfiguration _configuration;
+    private readonly EventSettingMigrationService _eventSettingMigrationService;
+    private readonly ILogger<MigrationController> _logger;
 
 
     public MigrationController(
@@ -61,7 +63,9 @@ public class MigrationController : Controller
         WorkflowApprovalUserMigration workflowApprovalUserMigration,
         WorkflowApprovalUserHistoryMigration workflowApprovalUserHistoryMigration,
         IHubContext<MigrationProgressHub> hubContext,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        EventSettingMigrationService eventSettingMigrationService,
+        ILogger<MigrationController> logger)
     {
         _uomMigration = uomMigration;
         _plantMigration = plantMigration;
@@ -87,6 +91,8 @@ public class MigrationController : Controller
         _workflowApprovalUserHistoryMigration = workflowApprovalUserHistoryMigration;
         _hubContext = hubContext;
         _configuration = configuration;
+        _eventSettingMigrationService = eventSettingMigrationService;
+        _logger = logger;
     }
 
     public IActionResult Index()
@@ -122,6 +128,7 @@ public class MigrationController : Controller
             new { name = "workflowamounthistory", description = "TBL_WorkFlowSub_History to workflow_amount_history" },
             new { name = "workflowapprovaluser", description = "TBL_WorkFlowSubSub to workflow_approval_user" },
             new { name = "workflowapprovaluserhistory", description = "TBL_WorkFlowSubSub_History to workflow_approval_user_history" },
+            new { name = "eventsetting", description = "TBL_EVENTMASTER to event_setting" },
         };
         return Json(tables);
     }
@@ -237,6 +244,11 @@ public class MigrationController : Controller
         else if (table.ToLower() == "workflowapprovaluserhistory")
         {
             var mappings = _workflowApprovalUserHistoryMigration.GetMappings();
+            return Json(mappings);
+        }
+        else if (table.ToLower() == "eventsetting")
+        {
+            var mappings = _eventSettingMigrationService.GetMappings();
             return Json(mappings);
         }
         return Json(new List<object>());
@@ -397,6 +409,10 @@ public class MigrationController : Controller
             else if (request.Table.ToLower() == "workflowapprovaluserhistory")
             {
                 recordCount = await _workflowApprovalUserHistoryMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "eventsetting")
+            {
+                recordCount = await _eventSettingMigrationService.MigrateAsync();
             }
             else
             {
@@ -972,6 +988,21 @@ public class MigrationController : Controller
         catch (Exception ex)
         {
             return Json(new { success = false, error = ex.Message });
+        }
+    }
+
+    [HttpPost("event-setting/migrate")]
+    public async Task<IActionResult> MigrateEventSettings()
+    {
+        try
+        {
+            var migratedCount = await _eventSettingMigrationService.MigrateAsync();
+            return Ok(new { Message = $"Successfully migrated {migratedCount} event_setting records." });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error occurred during event_setting migration.");
+            return StatusCode(500, new { Error = "An error occurred during migration." });
         }
     }
 }
