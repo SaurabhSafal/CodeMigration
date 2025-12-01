@@ -8,6 +8,7 @@ using DataMigration.Services;
 
 public class SupplierOtherContactMigration : MigrationService
 {
+    private HashSet<int> _validSupplierIds = new HashSet<int>();
     private const int BATCH_SIZE = 1000;
     protected override string SelectQuery => @"
         SELECT 
@@ -101,19 +102,36 @@ public class SupplierOtherContactMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        // Cache valid supplier_ids from supplier_master
+        _validSupplierIds = new HashSet<int>();
+        using (var cmd = new NpgsqlCommand("SELECT supplier_id FROM supplier_master", pgConn, transaction))
+        using (var reader = await cmd.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                _validSupplierIds.Add(reader.GetInt32(0));
+            }
+        }
+
         int insertedCount = 0;
         var batch = new List<Dictionary<string, object>>();
         using var selectCmd = new SqlCommand(SelectQuery, sqlConn);
-        using var reader = await selectCmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
+        using var reader2 = await selectCmd.ExecuteReaderAsync();
+        while (await reader2.ReadAsync())
         {
+            var supplierIdObj = reader2["VendorID"];
+            int supplierId = supplierIdObj == DBNull.Value ? 0 : Convert.ToInt32(supplierIdObj);
+            // Only skip if supplier_id is not present in supplier_master
+            if (!_validSupplierIds.Contains(supplierId))
+                continue;
+
             var record = new Dictionary<string, object>
             {
-                ["@supplier_other_contact_id"] = reader["ComunicationID"],
-                ["@supplier_id"] = reader["VendorID"],
-                ["@contact_name"] = reader["Name"] ?? (object)DBNull.Value,
-                ["@contact_number"] = reader["MobileNo"] ?? (object)DBNull.Value,
-                ["@contact_email_id"] = reader["Email"] ?? (object)DBNull.Value,
+                ["@supplier_other_contact_id"] = reader2["ComunicationID"],
+                ["@supplier_id"] = supplierId,
+                ["@contact_name"] = reader2["Name"] ?? (object)DBNull.Value,
+                ["@contact_number"] = reader2["MobileNo"] ?? (object)DBNull.Value,
+                ["@contact_email_id"] = reader2["Email"] ?? (object)DBNull.Value,
                 ["@created_by"] = 0,
                 ["@created_date"] = DateTime.UtcNow,
                 ["@modified_by"] = DBNull.Value,

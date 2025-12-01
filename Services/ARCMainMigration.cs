@@ -189,7 +189,15 @@ public class ARCMainMigration : MigrationService
                 pgCmd.Parameters.AddWithValue("@event_id", reader["EventId"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@used_total_value", reader["UsedTotalValue"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@arc_terms", reader["ARCTerms"] ?? DBNull.Value);
-                pgCmd.Parameters.AddWithValue("@currency_id", reader["CurrencyId"] ?? DBNull.Value);
+                var currencyId = reader["CurrencyId"];
+                if (currencyId == DBNull.Value || currencyId == null)
+                {
+                    pgCmd.Parameters.AddWithValue("@currency_id", 86);
+                }
+                else
+                {
+                    pgCmd.Parameters.AddWithValue("@currency_id", currencyId);
+                }
                 pgCmd.Parameters.AddWithValue("@created_by", reader["CreatedBy"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@created_date", reader["CreatedDate"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@modified_by", reader["UpdatedBy"] ?? DBNull.Value);
