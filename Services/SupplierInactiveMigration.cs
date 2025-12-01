@@ -11,13 +11,18 @@ public class SupplierInactiveMigration : MigrationService
     private const int BATCH_SIZE = 1000;
     protected override string SelectQuery => @"
         SELECT 
-            VendorInactiveId,
-            VendorId,
-            CompanyCode,
-            Inactive,
-            InactiveDate
-        FROM TBL_VendorInactive
-        ORDER BY VendorInactiveId";
+            vi.VendorInactiveId,
+            vi.VendorId,
+            vi.CompanyCode,
+            vi.Inactive,
+            vi.InactiveDate
+        FROM TBL_VendorInactive vi
+        WHERE EXISTS (
+            SELECT 1 
+            FROM TBL_VENDORMASTERNEW vm 
+            WHERE vm.VendorId = vi.VendorId
+        )
+        ORDER BY vi.VendorInactiveId";
 
     protected override string InsertQuery => @"
         INSERT INTO supplier_inactive (
@@ -96,10 +101,14 @@ public class SupplierInactiveMigration : MigrationService
         using var reader = await selectCmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
+            var vendorId = reader["VendorId"];
+            if (vendorId == DBNull.Value || Convert.ToInt32(vendorId) == 0)
+                continue; // Skip records with VendorId = 0
+
             var record = new Dictionary<string, object>
             {
                 ["@supplier_inactive_id"] = reader["VendorInactiveId"],
-                ["@supplier_id"] = reader["VendorId"],
+                ["@supplier_id"] = vendorId,
                 ["@plant_company_code"] = reader["CompanyCode"] ?? (object)DBNull.Value,
                 ["@inactive"] = (reader["Inactive"]?.ToString() == "Y" || reader["Inactive"]?.ToString() == "1"),
                 ["@inactivedate"] = reader["InactiveDate"] ?? (object)DBNull.Value,
