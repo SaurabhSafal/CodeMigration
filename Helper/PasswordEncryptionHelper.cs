@@ -8,7 +8,7 @@ namespace DataMigration.Helper
     {
         private const int SaltSize = 16;
         private const int KeySize = 32;
-        private const int Iterations = 1500000; // Increased from 10000 for better security
+        private const int Iterations = 15000; // Increased from 10000 for better security
 
         public static (string Hash, string Salt) EncryptPassword(string password)
         {

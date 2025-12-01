@@ -25,7 +25,62 @@ public class UsersMasterMigration : MigrationService
     private readonly int _rawQueueCapacity;
     private readonly int _writeQueueCapacity;
     private const int INITIAL_BATCH_SIZE = 1000;
+
     private const int PROGRESS_UPDATE_INTERVAL = 100;
+
+    // User type to role mapping (SQL Server USERTYPE_ID -> PostgreSQL role_id)
+    private static readonly Dictionary<int, int> UserTypeToRoleMapping = new Dictionary<int, int>
+    {
+        { 1, 1 },  // Admin -> Admin
+        { 2, 2 },  // Buyer -> Buyer
+        { 3, 3 },  // Supplier -> Supplier
+        { 6, 4 },  // HOD -> HOD
+        { 5, 5 }   // Technical -> Technical
+    };
+
+    // User type ID to text mapping
+    private static readonly Dictionary<int, string> UserTypeToTextMapping = new Dictionary<int, string>
+    {
+        { 1, "Admin" },
+        { 2, "Buyer" },
+        { 3, "Supplier" },
+        { 6, "HOD" },
+        { 5, "Technical" }
+    };
+
+    // Currency mapping (loaded dynamically from SQL Server)
+    private Dictionary<int, string> _currencyMapping = new Dictionary<int, string>();
+
+    private static int MapUserTypeToRoleId(int userTypeId)
+    {
+        return UserTypeToRoleMapping.TryGetValue(userTypeId, out var roleId) ? roleId : 0;
+    }
+
+    private static string MapUserTypeToText(int userTypeId)
+    {
+        return UserTypeToTextMapping.TryGetValue(userTypeId, out var text) ? text : "Unknown";
+    }
+
+    private string MapCurrencyIdToCode(int currencyId)
+    {
+        return _currencyMapping.TryGetValue(currencyId, out var code) ? code : "";
+    }
+
+    private async Task LoadCurrencyMappingAsync(NpgsqlConnection pgConn)
+    {
+        _currencyMapping.Clear();
+        using var cmd = new NpgsqlCommand("SELECT currency_id, currency_code FROM currency_master", pgConn);
+        using var reader = await cmd.ExecuteReaderAsync();
+        int count = 0;
+        while (await reader.ReadAsync())
+        {
+            var id = reader.GetInt32(0);
+            var code = reader.GetString(1);
+            _currencyMapping[id] = code;
+            count++;
+        }
+        Console.WriteLine($"Loaded {count} currency mappings from PostgreSQL currency_master table");
+    }
 
     protected override string SelectQuery => @"
         SELECT 
@@ -83,6 +138,9 @@ public class UsersMasterMigration : MigrationService
             await sqlConn.OpenAsync();
             await pgConn.OpenAsync();
 
+            progress.ReportProgress(0, 0, "Loading currency mappings from PostgreSQL...", stopwatch.Elapsed);
+            await LoadCurrencyMappingAsync(pgConn);
+
             progress.ReportProgress(0, 0, "Estimating total records...", stopwatch.Elapsed);
             int totalRecords = await GetTotalRecordsAsync(sqlConn);
 
@@ -125,7 +183,7 @@ public class UsersMasterMigration : MigrationService
         public string MobileNumber { get; set; } = "";
         public string Status { get; set; } = "";
         public string ReportingTo { get; set; } = "";
-        public string UserType { get; set; } = "";
+        public int UserTypeId { get; set; } // Store as int to map to role_id
         public string Currency { get; set; } = "";
         public string Location { get; set; } = "";
         public string ErpUsername { get; set; } = "";
@@ -133,45 +191,175 @@ public class UsersMasterMigration : MigrationService
         public string DigitalSignature { get; set; } = "";
     }
 
+    private bool ValidateUserRecord(UserRecord record, out string errorMessage)
+    {
+        errorMessage = "";
+        
+        if (record == null)
+        {
+            errorMessage = "Record is null";
+            return false;
+        }
+        
+        if (record.UserId <= 0)
+        {
+            errorMessage = $"Invalid UserId: {record.UserId}";
+            return false;
+        }
+        
+        if (record.Username == null)
+        {
+            errorMessage = "Username is null";
+            return false;
+        }
+        
+        if (record.PasswordHash == null || record.PasswordSalt == null)
+        {
+            errorMessage = $"Password hash or salt is null (hash={record.PasswordHash?.Length ?? -1}, salt={record.PasswordSalt?.Length ?? -1})";
+            return false;
+        }
+        
+        // Ensure all string fields are not null (empty string is OK)
+        if (record.FullName == null) record.FullName = string.Empty;
+        if (record.Email == null) record.Email = string.Empty;
+        if (record.MobileNumber == null) record.MobileNumber = string.Empty;
+        if (record.Status == null) record.Status = string.Empty;
+        if (record.MaskedEmail == null) record.MaskedEmail = string.Empty;
+        if (record.MaskedMobileNumber == null) record.MaskedMobileNumber = string.Empty;
+        if (record.EmailHash == null) record.EmailHash = string.Empty;
+        if (record.MobileHash == null) record.MobileHash = string.Empty;
+        if (record.ReportingToId == null) record.ReportingToId = string.Empty;
+        if (record.UserType == null) record.UserType = string.Empty;
+        if (record.Currency == null) record.Currency = string.Empty;
+        if (record.Location == null) record.Location = string.Empty;
+        if (record.ErpUsername == null) record.ErpUsername = string.Empty;
+        if (record.ApprovalHead == null) record.ApprovalHead = string.Empty;
+        if (record.DigitalSignature == null) record.DigitalSignature = string.Empty;
+        if (record.DigitalSignaturePath == null) record.DigitalSignaturePath = string.Empty;
+        
+        return true;
+    }
+
     private UserRecord? BuildUserRecordFromRaw(RawUserRow raw)
     {
         try
         {
-            // use configured hash iterations for speed or security based on _fastMode
-            var (passwordHash, passwordSalt) = PasswordEncryptionHelper.EncryptPassword(raw.RawPassword ?? string.Empty, _hashIterations);
-            var encryptedEmail = string.IsNullOrEmpty(raw.Email) ? string.Empty : _aesEncryptionService.Encrypt(raw.Email);
-            var encryptedMobileNumber = string.IsNullOrEmpty(raw.MobileNumber) ? string.Empty : _aesEncryptionService.Encrypt(raw.MobileNumber);
-            var emailHash = string.IsNullOrEmpty(raw.Email) ? string.Empty : AesEncryptionService.ComputeSha256Hash(raw.Email);
-            var mobileHash = string.IsNullOrEmpty(raw.MobileNumber) ? string.Empty : AesEncryptionService.ComputeSha256Hash(raw.MobileNumber);
+            // Validate that raw is not null
+            if (raw == null)
+            {
+                Console.WriteLine("BuildUserRecordFromRaw: raw parameter is null");
+                return null;
+            }
 
+            // Check if critical services are initialized
+            if (_aesEncryptionService == null)
+            {
+                Console.WriteLine($"BuildUserRecordFromRaw: AES service is null for user {raw.PersonId}");
+                return null;
+            }
+
+            // Step 1: Hash password
+            string passwordHash = "";
+            string passwordSalt = "";
+            try
+            {
+                // If password is empty, use a default placeholder to avoid exception
+                var passwordToHash = string.IsNullOrEmpty(raw.RawPassword) ? "DefaultPassword123!" : raw.RawPassword;
+                (passwordHash, passwordSalt) = PasswordEncryptionHelper.EncryptPassword(passwordToHash, _hashIterations);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error encrypting password for user {raw.PersonId}: {ex.Message}");
+                throw;
+            }
+
+            // Step 2: Encrypt email
+            string encryptedEmail = "";
+            try
+            {
+                encryptedEmail = string.IsNullOrEmpty(raw.Email) ? string.Empty : _aesEncryptionService.Encrypt(raw.Email);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error encrypting email for user {raw.PersonId} (email: '{raw.Email}'): {ex.Message}");
+                throw;
+            }
+
+            // Step 3: Encrypt mobile number
+            string encryptedMobileNumber = "";
+            try
+            {
+                encryptedMobileNumber = string.IsNullOrEmpty(raw.MobileNumber) ? string.Empty : _aesEncryptionService.Encrypt(raw.MobileNumber);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error encrypting mobile for user {raw.PersonId} (mobile: '{raw.MobileNumber}'): {ex.Message}");
+                throw;
+            }
+
+            // Step 4: Compute hashes
+            string emailHash = "";
+            string mobileHash = "";
+            try
+            {
+                emailHash = string.IsNullOrEmpty(raw.Email) ? string.Empty : AesEncryptionService.ComputeSha256Hash(raw.Email);
+                mobileHash = string.IsNullOrEmpty(raw.MobileNumber) ? string.Empty : AesEncryptionService.ComputeSha256Hash(raw.MobileNumber);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error computing hashes for user {raw.PersonId}: {ex.Message}");
+                throw;
+            }
+
+            // Step 5: Generate masked values
+            string maskedEmail = "";
+            string maskedMobile = "";
+            try
+            {
+                maskedEmail = MaskHelper.MaskEmail(raw.Email ?? string.Empty);
+                maskedMobile = MaskHelper.MaskPhoneNumber(raw.MobileNumber ?? string.Empty);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error masking fields for user {raw.PersonId}: {ex.Message}");
+                throw;
+            }
+
+            // Step 6: Create record with explicit null-coalescing for all fields
             return new UserRecord
             {
                 UserId = raw.PersonId,
-                Username = raw.UserId ?? "",
-                PasswordHash = passwordHash,
-                PasswordSalt = passwordSalt,
-                FullName = raw.FullName ?? "",
-                Email = encryptedEmail,
-                MobileNumber = encryptedMobileNumber,
-                Status = raw.Status ?? "",
-                MaskedEmail = MaskHelper.MaskEmail(raw.Email ?? string.Empty),
-                MaskedMobileNumber = MaskHelper.MaskPhoneNumber(raw.MobileNumber ?? string.Empty),
-                EmailHash = emailHash,
-                MobileHash = mobileHash,
-                ReportingToId = raw.ReportingTo ?? "",
-                UserType = raw.UserType ?? "",
-                Currency = raw.Currency ?? "",
-                Location = raw.Location ?? "",
-                ErpUsername = raw.ErpUsername ?? "",
-                ApprovalHead = raw.ApprovalHead ?? "",
-                DigitalSignature = raw.DigitalSignature ?? "",
-                DigitalSignaturePath = "/Documents/TechnicalDocuments/" + (raw.DigitalSignature ?? "")
+                Username = raw.UserId ?? string.Empty,
+                PasswordHash = passwordHash ?? string.Empty,
+                PasswordSalt = passwordSalt ?? string.Empty,
+                FullName = raw.FullName ?? string.Empty,
+                Email = encryptedEmail ?? string.Empty,
+                MobileNumber = encryptedMobileNumber ?? string.Empty,
+                Status = raw.Status ?? string.Empty,
+                MaskedEmail = maskedEmail ?? string.Empty,
+                MaskedMobileNumber = maskedMobile ?? string.Empty,
+                EmailHash = emailHash ?? string.Empty,
+                MobileHash = mobileHash ?? string.Empty,
+                ReportingToId = raw.ReportingTo ?? string.Empty,
+                UserTypeId = raw.UserTypeId, // Store the original type ID for role mapping
+                UserType = MapUserTypeToText(raw.UserTypeId) ?? string.Empty, // Convert to text for users table
+                Currency = raw.Currency ?? string.Empty, // Will be mapped in reading phase
+                Location = raw.Location ?? string.Empty,
+                ErpUsername = raw.ErpUsername ?? string.Empty,
+                ApprovalHead = raw.ApprovalHead ?? string.Empty,
+                DigitalSignature = raw.DigitalSignature ?? string.Empty,
+                DigitalSignaturePath = "/Documents/TechnicalDocuments/" + (raw.DigitalSignature ?? string.Empty)
             };
         }
         catch (Exception ex)
         {
-            // log minimal info
-            Console.WriteLine($"Transform error for user {raw.PersonId}: {ex.Message}");
+            // log detailed error info
+            Console.WriteLine($"Transform error for user {raw?.PersonId ?? -1}: {ex.Message}");
+            Console.WriteLine($"Stack trace: {ex.StackTrace}");
+            if (ex.InnerException != null)
+            {
+                Console.WriteLine($"Inner exception: {ex.InnerException.Message}");
+            }
             return null;
         }
     }
@@ -197,6 +385,7 @@ public class UsersMasterMigration : MigrationService
 
         var rawQueue = new BlockingCollection<RawUserRow>(rawQueueCapacity);
         var writeQueue = new BlockingCollection<List<UserRecord>>(writeQueueCapacity);
+        var userRolesList = new ConcurrentBag<(int userId, int roleId)>(); // Collect user-role mappings
         var listPool = new ConcurrentBag<List<UserRecord>>();
         // Pre-seed pool to avoid allocations
         for (int i = 0; i < Math.Max(4, transformWorkerCount * 2); i++)
@@ -206,98 +395,42 @@ public class UsersMasterMigration : MigrationService
         var cts = new CancellationTokenSource();
         var token = cts.Token;
 
-        // Prepare COPY command once
+        // Diagnostic: Query actual table schema
+        try
+        {
+            using var schemaCmd = pgConn.CreateCommand();
+            schemaCmd.CommandText = @"
+                SELECT column_name, data_type, ordinal_position
+                FROM information_schema.columns
+                WHERE table_name = 'users' AND table_schema = 'public'
+                ORDER BY ordinal_position";
+            using var schemaReader = await schemaCmd.ExecuteReaderAsync();
+            Console.WriteLine("\n=== PostgreSQL 'users' table schema ===");
+            int colCount = 0;
+            while (await schemaReader.ReadAsync())
+            {
+                colCount++;
+                Console.WriteLine($"{schemaReader.GetInt32(2),3}. {schemaReader.GetString(0),-40} {schemaReader.GetString(1)}");
+            }
+            Console.WriteLine($"Total columns in PostgreSQL users table: {colCount}\n");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Warning: Could not query schema: {ex.Message}");
+        }
+
+        // COPY command with required NOT NULL columns included
         var copyCommand = @"COPY users (
-            user_id, username, password_hash, full_name, email, mobile_number, status,
-            password_salt, masked_email, masked_mobile_number, email_hash, mobile_hash, failed_login_attempts,
-            last_failed_login, lockout_end, last_login_date, is_mfa_enabled, mfa_type, mfa_secret, last_mfa_sent_at,
-            reporting_to_id, lockout_count, azureoid, user_type, currency, location, client_sap_code,
-            digital_signature, last_password_changed, is_active, created_by, created_date, modified_by, modified_date,
-            is_deleted, deleted_by, deleted_date, erp_username, approval_head, time_zone_country, digital_signature_path
+            user_id, username, password_hash, password_salt, full_name, 
+            email, mobile_number, masked_email, masked_mobile_number,
+            email_hash, mobile_hash, status, reporting_to_id, user_type,
+            erp_username, approval_head, time_zone_country,
+            is_active, created_by, created_date
         ) FROM STDIN (FORMAT BINARY)";
 
         Exception? backgroundException = null;
 
-        // Consumer writer: write into PG using a single BinaryImport writer to minimize overhead
-        var writerTask = Task.Run(async () =>
-        {
-            try
-            {
-                using var writer = await pgConn.BeginBinaryImportAsync(copyCommand, CancellationToken.None);
-                var now = DateTime.UtcNow;
-
-                foreach (var batch in writeQueue.GetConsumingEnumerable(token))
-                {
-                    try
-                    {
-                        foreach (var record in batch)
-                        {
-                            writer.StartRow();
-                            writer.Write(record.UserId, NpgsqlTypes.NpgsqlDbType.Integer);
-                            writer.Write(record.Username ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                            writer.Write(record.PasswordHash ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                            writer.Write(record.FullName ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                            writer.Write(record.Email ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                            writer.Write(record.MobileNumber ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                            writer.Write(record.Status ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                            writer.Write(record.PasswordSalt ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                            writer.Write(record.MaskedEmail ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                            writer.Write(record.MaskedMobileNumber ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                            writer.Write(record.EmailHash ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                            writer.Write(record.MobileHash ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                            writer.Write(0, NpgsqlTypes.NpgsqlDbType.Integer); // failed_login_attempts
-                            writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Timestamp); // last_failed_login
-                            writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Timestamp); // lockout_end
-                            writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Timestamp); // last_login_date
-                            writer.Write(false, NpgsqlTypes.NpgsqlDbType.Boolean); // is_mfa_enabled
-                            writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Text); // mfa_type
-                            writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Text); // mfa_secret
-                            writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Timestamp); // last_mfa_sent_at
-                            writer.Write(record.ReportingToId ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                            writer.Write(0, NpgsqlTypes.NpgsqlDbType.Integer); // lockout_count
-                            writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Text); // azureoid
-                            writer.Write(record.UserType ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                            writer.Write(record.Currency ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                            writer.Write(record.Location ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                            writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Text); // client_sap_code
-                            writer.Write(record.DigitalSignature ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                            writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Timestamp); // last_password_changed
-                            writer.Write(true, NpgsqlTypes.NpgsqlDbType.Boolean); // is_active
-                            writer.Write(0, NpgsqlTypes.NpgsqlDbType.Integer); // created_by
-                            writer.Write(now, NpgsqlTypes.NpgsqlDbType.Timestamp); // created_date
-                            writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Integer); // modified_by
-                            writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Timestamp); // modified_date
-                            writer.Write(false, NpgsqlTypes.NpgsqlDbType.Boolean); // is_deleted
-                            writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Integer); // deleted_by
-                            writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Timestamp); // deleted_date
-                            writer.Write(record.ErpUsername ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                            writer.Write(record.ApprovalHead ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                            writer.Write(record.Location ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text); // time_zone_country
-                            writer.Write(record.DigitalSignaturePath ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                        }
-
-                        Interlocked.Add(ref insertedCount, batch.Count);
-                    }
-                    catch (Exception ex)
-                    {
-                        Interlocked.Increment(ref errorCount);
-                        progress.ReportError($"Error writing record chunk to PostgreSQL: {ex.Message}", processedCount);
-                        // stop on write errors
-                        cts.Cancel();
-                        throw;
-                    }
-                }
-
-                writer.Complete();
-            }
-            catch (Exception ex)
-            {
-                backgroundException = ex;
-                cts.Cancel();
-            }
-        }, token);
-
-        // Determine writer count
+        // Determine writer count - use single writer when in transaction to avoid connection conflicts
         int writerCount = transaction != null ? 1 : Math.Min(4, Math.Max(1, Environment.ProcessorCount / 2));
 
         var writerTasks = new List<Task>(writerCount);
@@ -328,48 +461,53 @@ public class UsersMasterMigration : MigrationService
                         {
                             foreach (var record in batchList)
                             {
-                                writer.StartRow();
-                                writer.Write(record.UserId, NpgsqlTypes.NpgsqlDbType.Integer);
-                                writer.Write(record.Username ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                                writer.Write(record.PasswordHash ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                                writer.Write(record.FullName ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                                writer.Write(record.Email ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                                writer.Write(record.MobileNumber ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                                writer.Write(record.Status ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                                writer.Write(record.PasswordSalt ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                                writer.Write(record.MaskedEmail ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                                writer.Write(record.MaskedMobileNumber ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                                writer.Write(record.EmailHash ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                                writer.Write(record.MobileHash ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                                writer.Write(0, NpgsqlTypes.NpgsqlDbType.Integer); // failed_login_attempts
-                                writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Timestamp); // last_failed_login
-                                writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Timestamp); // lockout_end
-                                writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Timestamp); // last_login_date
-                                writer.Write(false, NpgsqlTypes.NpgsqlDbType.Boolean); // is_mfa_enabled
-                                writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Text); // mfa_type
-                                writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Text); // mfa_secret
-                                writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Timestamp); // last_mfa_sent_at
-                                writer.Write(record.ReportingToId ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                                writer.Write(0, NpgsqlTypes.NpgsqlDbType.Integer); // lockout_count
-                                writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Text); // azureoid
-                                writer.Write(record.UserType ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                                writer.Write(record.Currency ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                                writer.Write(record.Location ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                                writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Text); // client_sap_code
-                                writer.Write(record.DigitalSignature ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                                writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Timestamp); // last_password_changed
-                                writer.Write(true, NpgsqlTypes.NpgsqlDbType.Boolean); // is_active
-                                writer.Write(0, NpgsqlTypes.NpgsqlDbType.Integer); // created_by
-                                writer.Write(now, NpgsqlTypes.NpgsqlDbType.Timestamp); // created_date
-                                writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Integer); // modified_by
-                                writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Timestamp); // modified_date
-                                writer.Write(false, NpgsqlTypes.NpgsqlDbType.Boolean); // is_deleted
-                                writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Integer); // deleted_by
-                                writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Timestamp); // deleted_date
-                                writer.Write(record.ErpUsername ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                                writer.Write(record.ApprovalHead ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
-                                writer.Write(record.Location ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text); // time_zone_country
-                                writer.Write(record.DigitalSignaturePath ?? string.Empty, NpgsqlTypes.NpgsqlDbType.Text);
+                                try
+                                {
+                                    writer.StartRow();
+                                    writer.Write(record.UserId, NpgsqlDbType.Integer); // user_id
+                                    writer.Write(record.Username ?? string.Empty, NpgsqlDbType.Text); // username
+                                    writer.Write(record.PasswordHash ?? string.Empty, NpgsqlDbType.Text); // password_hash
+                                    writer.Write(record.PasswordSalt ?? string.Empty, NpgsqlDbType.Text); // password_salt
+                                    writer.Write(record.FullName ?? string.Empty, NpgsqlDbType.Text); // full_name
+                                    writer.Write(record.Email ?? string.Empty, NpgsqlDbType.Text); // email
+                                    writer.Write(record.MobileNumber ?? string.Empty, NpgsqlDbType.Text); // mobile_number
+                                    writer.Write(record.MaskedEmail ?? string.Empty, NpgsqlDbType.Text); // masked_email
+                                    writer.Write(record.MaskedMobileNumber ?? string.Empty, NpgsqlDbType.Text); // masked_mobile_number
+                                    writer.Write(record.EmailHash ?? string.Empty, NpgsqlDbType.Text); // email_hash
+                                    writer.Write(record.MobileHash ?? string.Empty, NpgsqlDbType.Text); // mobile_hash
+                                    writer.Write(record.Status ?? string.Empty, NpgsqlDbType.Text); // status
+                                    // reporting_to_id is INTEGER in PostgreSQL, convert from string
+                                    int reportingToId = int.TryParse(record.ReportingToId, out var rtId) ? rtId : 0;
+                                    writer.Write(reportingToId, NpgsqlDbType.Integer); // reporting_to_id
+                                    writer.Write(record.UserType ?? string.Empty, NpgsqlDbType.Text); // user_type
+                                    writer.Write(record.ErpUsername ?? string.Empty, NpgsqlDbType.Text); // erp_username
+                                    // approval_head is INTEGER in PostgreSQL, convert from string
+                                    int approvalHead = int.TryParse(record.ApprovalHead, out var ahId) ? ahId : 0;
+                                    writer.Write(approvalHead, NpgsqlDbType.Integer); // approval_head
+                                    writer.Write(record.Location ?? string.Empty, NpgsqlDbType.Text); // time_zone_country
+                                    writer.Write(true, NpgsqlDbType.Boolean); // is_active
+                                    writer.Write(0, NpgsqlDbType.Integer); // created_by
+                                    writer.Write(now, NpgsqlDbType.TimestampTz); // created_date
+
+                                    // Collect user-role mapping for later insertion
+                                    int roleId = MapUserTypeToRoleId(record.UserTypeId);
+                                    if (roleId > 0)
+                                    {
+                                        userRolesList.Add((record.UserId, roleId));
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    // Log which specific record failed
+                                    Console.WriteLine($"Error writing user {record.UserId} ({record.Username}): {ex.Message}");
+                                    Console.WriteLine($"  UserId: {record.UserId}");
+                                    Console.WriteLine($"  Username: {record.Username ?? "NULL"}");
+                                    Console.WriteLine($"  PasswordHash length: {record.PasswordHash?.Length ?? 0}");
+                                    Console.WriteLine($"  PasswordSalt length: {record.PasswordSalt?.Length ?? 0}");
+                                    Console.WriteLine($"  Email length: {record.Email?.Length ?? 0}");
+                                    Console.WriteLine($"  MobileNumber length: {record.MobileNumber?.Length ?? 0}");
+                                    throw;
+                                }
                             }
 
                             Interlocked.Add(ref insertedCount, batchList.Count);
@@ -426,22 +564,34 @@ public class UsersMasterMigration : MigrationService
                             var userRecord = BuildUserRecordFromRaw(raw);
                             if (userRecord != null)
                             {
-                                localBatch.Add(userRecord);
-                                if (localBatch.Count >= TRANSFORM_BATCH_SIZE)
+                                // Validate the record before adding to batch
+                                if (ValidateUserRecord(userRecord, out string validationError))
                                 {
-                                    writeQueue.Add(localBatch, token);
-                                    localBatch = listPool.TryTake(out pooledList) ? pooledList : new List<UserRecord>(TRANSFORM_BATCH_SIZE);
+                                    localBatch.Add(userRecord);
+                                    if (localBatch.Count >= TRANSFORM_BATCH_SIZE)
+                                    {
+                                        writeQueue.Add(localBatch, token);
+                                        localBatch = listPool.TryTake(out pooledList) ? pooledList : new List<UserRecord>(TRANSFORM_BATCH_SIZE);
+                                    }
+                                }
+                                else
+                                {
+                                    Interlocked.Increment(ref skippedCount);
+                                    Console.WriteLine($"Validation failed for user PersonId={raw.PersonId}, UserId={raw.UserId ?? "null"}: {validationError}");
                                 }
                             }
                             else
                             {
                                 Interlocked.Increment(ref skippedCount);
+                                Console.WriteLine($"Skipped user: PersonId={raw.PersonId}, UserId={raw.UserId ?? "null"}");
                             }
                         }
                         catch (Exception ex)
                         {
                             Interlocked.Increment(ref errorCount);
-                            progress.ReportError($"Error transforming record: {ex.Message}", Interlocked.CompareExchange(ref processedCount, 0, 0));
+                            var errorMsg = $"Error transforming user PersonId={raw?.PersonId ?? -1}, UserId={raw?.UserId ?? "null"}: {ex.Message}";
+                            Console.WriteLine(errorMsg);
+                            progress.ReportError(errorMsg, Interlocked.CompareExchange(ref processedCount, 0, 0));
                         }
                     }
 
@@ -502,12 +652,12 @@ public class UsersMasterMigration : MigrationService
                         Email = reader.IsDBNull(ordEmail) ? string.Empty : reader.GetString(ordEmail),
                         MobileNumber = reader.IsDBNull(ordMobile) ? string.Empty : reader.GetString(ordMobile),
                         Status = reader.IsDBNull(ordStatus) ? string.Empty : reader.GetString(ordStatus),
-                        ReportingTo = reader.IsDBNull(ordReporting) ? string.Empty : reader.GetString(ordReporting),
-                        UserType = reader.IsDBNull(ordUserType) ? string.Empty : reader.GetString(ordUserType),
-                        Currency = reader.IsDBNull(ordCurrency) ? string.Empty : reader.GetString(ordCurrency),
+                        ReportingTo = reader.IsDBNull(ordReporting) ? "0" : reader.GetInt32(ordReporting).ToString(),
+                        UserTypeId = reader.IsDBNull(ordUserType) ? 0 : reader.GetInt32(ordUserType),
+                        Currency = reader.IsDBNull(ordCurrency) ? "" : MapCurrencyIdToCode(reader.GetInt32(ordCurrency)),
                         Location = reader.IsDBNull(ordLocation) ? string.Empty : reader.GetString(ordLocation),
                         ErpUsername = reader.IsDBNull(ordErp) ? string.Empty : reader.GetString(ordErp),
-                        ApprovalHead = reader.IsDBNull(ordApproval) ? string.Empty : reader.GetString(ordApproval),
+                        ApprovalHead = reader.IsDBNull(ordApproval) ? "0" : reader.GetInt32(ordApproval).ToString(),
                         DigitalSignature = reader.IsDBNull(ordDigital) ? string.Empty : reader.GetString(ordDigital)
                     };
 
@@ -535,21 +685,18 @@ public class UsersMasterMigration : MigrationService
             // Signal writer no more items
             writeQueue.CompleteAdding();
 
-            // Wait for backgrond writer tasks to finish
-            if (writerTasks != null && writerTasks.Count > 0)
-            {
-                await Task.WhenAll(writerTasks);
-            }
-            else
-            {
-                // fallback to previously used single writerTask
-                await writerTask;
-            }
+            // Wait for all writer tasks to finish
+            await Task.WhenAll(writerTasks);
 
             if (backgroundException != null)
             {
                 throw backgroundException;
             }
+
+            // After users are migrated, insert user_roles
+            progress.ReportProgress(processedCount, totalRecords, "Inserting user roles...", stopwatch.Elapsed);
+            int rolesInserted = await InsertUserRolesAsync(pgConn, userRolesList, transaction);
+            progress.ReportProgress(processedCount, totalRecords, $"User roles inserted: {rolesInserted}", stopwatch.Elapsed);
         }
         catch (Exception ex)
         {
@@ -580,6 +727,41 @@ public class UsersMasterMigration : MigrationService
             return Math.Min(currentBatchSize * 2, 5000); // Increase batch size
         }
         return currentBatchSize; // Keep batch size unchanged
+    }
+
+    private async Task<int> InsertUserRolesAsync(
+        NpgsqlConnection pgConn,
+        ConcurrentBag<(int userId, int roleId)> userRoles,
+        NpgsqlTransaction? transaction = null)
+    {
+        if (userRoles.IsEmpty) return 0;
+
+        var copyCommand = @"COPY user_roles (
+            user_id, role_id, created_by, created_date, modified_by, modified_date,
+            is_deleted, deleted_by, deleted_date
+        ) FROM STDIN (FORMAT BINARY)";
+
+        using var writer = await pgConn.BeginBinaryImportAsync(copyCommand, CancellationToken.None);
+        var now = DateTime.UtcNow;
+        int count = 0;
+
+        foreach (var (userId, roleId) in userRoles)
+        {
+            writer.StartRow();
+            writer.Write(userId, NpgsqlTypes.NpgsqlDbType.Integer); // user_id
+            writer.Write(roleId, NpgsqlTypes.NpgsqlDbType.Integer); // role_id
+            writer.Write(0, NpgsqlTypes.NpgsqlDbType.Integer); // created_by
+            writer.Write(now, NpgsqlTypes.NpgsqlDbType.TimestampTz); // created_date
+            writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Integer); // modified_by
+            writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.TimestampTz); // modified_date
+            writer.Write(false, NpgsqlTypes.NpgsqlDbType.Boolean); // is_deleted
+            writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Integer); // deleted_by
+            writer.Write(DBNull.Value, NpgsqlTypes.NpgsqlDbType.TimestampTz); // deleted_date
+            count++;
+        }
+
+        await writer.CompleteAsync();
+        return count;
     }
 
     private UserRecord? ReadUserRecord(SqlDataReader reader, int recordNumber)
@@ -702,47 +884,43 @@ public class UsersMasterMigration : MigrationService
     {
         return new List<string>
         {
-            "Direct", // user_id
-            "Direct", // username
-            "Direct", // password_hash
-            "Direct", // full_name
-            "Direct", // email
-            "Direct", // mobile_number
-            "Direct", // status
-            "Default: null", // password_salt
-            "Direct", // masked_email
-            "Direct", // masked_mobile_number
-            "Default: null", // email_hash
-            "Default: null", // mobile_hash
-            "Default: 0", // failed_login_attempts
-            "Default: null", // last_failed_login
-            "Default: null", // lockout_end
-            "Default: null", // last_login_date
-            "Default: false", // is_mfa_enabled
-            "Default: null", // mfa_type
-            "Default: null", // mfa_secret
-            "Default: null", // last_mfa_sent_at
-            "Default: null", // reporting_to_id
-            "Default: 0", // lockout_count
-            "Default: null", // azureoid
-            "Direct", // user_type
-            "Direct", // currency
-            "Direct", // location
-            "Default: null", // client_sap_code
-            "Direct", // digital_signature
-            "Default: null", // last_password_changed
-            "Default: true", // is_active
-            "Default: 0", // created_by
-            "Default: Now", // created_date
-            "Default: null", // modified_by
-            "Default: null", // modified_date
-            "Default: false", // is_deleted
-            "Default: null", // deleted_by
-            "Default: null", // deleted_date
-            "Direct", // erp_username
-            "Direct", // approval_head
-            "Default: null", // time_zone_country
-            "Default: null" // digital_signature_path
+            "PERSON_ID -> user_id (Direct)",
+            "USER_ID -> username (Direct)",
+            "USERPASSWORD -> password_hash (Hashed using PBKDF2 with configurable iterations)",
+            "password_salt -> password_salt (Generated during migration)",
+            "FULL_NAME -> full_name (Direct)",
+            "EMAIL_ADDRESS -> email (AES Encrypted)",
+            "MobileNumber -> mobile_number (AES Encrypted)",
+            "masked_email -> masked_email (Generated using MaskHelper.MaskEmail)",
+            "masked_mobile_number -> masked_mobile_number (Generated using MaskHelper.MaskPhoneNumber)",
+            "email_hash -> email_hash (SHA256, Generated during migration)",
+            "mobile_hash -> mobile_hash (SHA256, Generated during migration)",
+            "STATUS -> status (Direct)",
+            "REPORTINGTO -> reporting_to_id (Direct, int to string conversion)",
+            "USERTYPE_ID -> user_type (Mapped to text: 1=Admin, 2=Buyer, 3=Supplier, 6=HOD, 5=Technical)",
+            "USERTYPE_ID -> user_roles.role_id (Mapped: 1->1, 2->2, 3->3, 6->4, 5->5)",
+            "CURRENCYID -> currency (Mapped from PostgreSQL currency_master.currency_code using currency_id)",
+            "USER_SAP_ID -> erp_username (Direct)",
+            "DEPARTMENTHEAD -> approval_head (Direct, int to string conversion)",
+            "TIMEZONE -> time_zone_country (Direct)",
+            "DigitalSignature -> digital_signature (Direct)",
+            "digital_signature_path -> digital_signature_path (Generated: /Documents/TechnicalDocuments/ + DigitalSignature)",
+            "is_active -> is_active (Fixed: true)",
+            "created_by -> created_by (Fixed: 0)",
+            "created_date -> created_date (Set to migration timestamp)",
+            "modified_by -> NULL (Fixed Default)",
+            "modified_date -> NULL (Fixed Default)",
+            "is_deleted -> false (Fixed Default)",
+            "deleted_by -> NULL (Fixed Default)",
+            "deleted_date -> NULL (Fixed Default)",
+            "",
+            "Additional Processing:",
+            "- User roles inserted into user_roles table with mapping",
+            "- Password hashing uses configurable iterations (default: 10000 in fast mode, 1500000 in secure mode)",
+            "- Parallel transform workers for high-performance processing",
+            "- PostgreSQL COPY for bulk insert optimization",
+            "",
+            "Note: Fields not present in minimal COPY are omitted for schema compatibility"
         };
     }
 
@@ -761,7 +939,8 @@ public class UsersMasterMigration : MigrationService
         public string EmailHash { get; set; } = "";
         public string MobileHash { get; set; } = "";
         public string ReportingToId { get; set; } = "";
-        public string UserType { get; set; } = "";
+        public int UserTypeId { get; set; } // Store original ID for role mapping
+        public string UserType { get; set; } = ""; // Text version for users table
         public string Currency { get; set; } = "";
         public string Location { get; set; } = "";
         public string ErpUsername { get; set; } = "";

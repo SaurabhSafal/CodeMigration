@@ -34,6 +34,7 @@ public class MigrationController : Controller
     private readonly WorkflowApprovalUserMigration _workflowApprovalUserMigration;
     private readonly WorkflowApprovalUserHistoryMigration _workflowApprovalUserHistoryMigration;
     private readonly IHubContext<MigrationProgressHub> _hubContext;
+    private readonly IConfiguration _configuration;
 
 
     public MigrationController(
@@ -59,7 +60,8 @@ public class MigrationController : Controller
         WorkflowAmountHistoryMigration workflowAmountHistoryMigration,
         WorkflowApprovalUserMigration workflowApprovalUserMigration,
         WorkflowApprovalUserHistoryMigration workflowApprovalUserHistoryMigration,
-        IHubContext<MigrationProgressHub> hubContext)
+        IHubContext<MigrationProgressHub> hubContext,
+        IConfiguration configuration)
     {
         _uomMigration = uomMigration;
         _plantMigration = plantMigration;
@@ -84,6 +86,7 @@ public class MigrationController : Controller
         _workflowApprovalUserMigration = workflowApprovalUserMigration;
         _workflowApprovalUserHistoryMigration = workflowApprovalUserHistoryMigration;
         _hubContext = hubContext;
+        _configuration = configuration;
     }
 
     public IActionResult Index()
@@ -880,6 +883,67 @@ public class MigrationController : Controller
         {
             var recordCount = await _workflowHistoryTableMigration.MigrateWithoutTransactionAsync();
             return Json(new { success = true, message = $"WorkflowHistory migration completed without transaction. {recordCount} records migrated." });
+        }
+        catch (Exception ex)
+        {
+            return Json(new { success = false, error = ex.Message });
+        }
+    }
+
+    [HttpPost("truncate-table/{table}")]
+    public async Task<IActionResult> TruncateTable(string table)
+    {
+        try
+        {
+            // Map table names to PostgreSQL table names
+            var tableMapping = new Dictionary<string, string>
+            {
+                { "uom", "uom_master" },
+                { "plant", "plant_master" },
+                { "currency", "currency_master" },
+                { "country", "country_master" },
+                { "material_group", "material_group_master" },
+                { "purchase_group", "purchase_group_master" },
+                { "payment_term", "payment_term_master" },
+                { "material", "material_master" },
+                { "event", "event_master" },
+                { "tax", "tax_master" },
+                { "users", "users" },
+                { "erp_pr_lines", "erp_pr_lines" },
+                { "incoterm", "incoterm_master" },
+                { "po_doc_type", "po_doc_type_master" },
+                { "po_condition", "po_condition_master" },
+                { "workflow", "workflow_master" },
+                { "workflow_history", "workflow_master_history" },
+                { "workflow_history_table", "workflow_history" },
+                { "workflow_amount", "workflow_amount" },
+                { "workflow_amount_history", "workflow_amount_history" },
+                { "workflow_approval_user", "workflow_approval_user" },
+                { "workflow_approval_user_history", "workflow_approval_user_history" }
+            };
+
+            if (!tableMapping.TryGetValue(table, out var pgTableName))
+            {
+                return Json(new { success = false, error = $"Unknown table: {table}" });
+            }
+
+            // Get PostgreSQL connection string from configuration
+            var connectionString = _configuration.GetConnectionString("PostgreSql");
+            
+            using (var conn = new Npgsql.NpgsqlConnection(connectionString))
+            {
+                await conn.OpenAsync();
+                
+                // Use TRUNCATE CASCADE to handle foreign key constraints
+                var truncateCommand = $"TRUNCATE TABLE {pgTableName} CASCADE";
+                
+                using (var cmd = new Npgsql.NpgsqlCommand(truncateCommand, conn))
+                {
+                    await cmd.ExecuteNonQueryAsync();
+                }
+            }
+
+            return Json(new { success = true, message = $"Table '{pgTableName}' truncated successfully (CASCADE)" });
         }
         catch (Exception ex)
         {
