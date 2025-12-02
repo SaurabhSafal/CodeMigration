@@ -44,7 +44,6 @@ SELECT
     PBType,
     Remarks,
     BasePriceGms,
-    IBIASiteDate,
     PPOId,
     BasicPrice,
     BasicDiscountPer,
@@ -166,15 +165,31 @@ ON CONFLICT (event_item_id) DO UPDATE SET
         int batchNumber = 0;
         var batch = new List<Dictionary<string, object>>();
 
-        // Load lookup data
-        var erpPrLinesData = await LoadErpPrLinesDataAsync(pgConn, transaction);
-        var uomMasterData = await LoadUomMasterDataAsync(pgConn, transaction);
-        
-        _logger.LogInformation($"Loaded {erpPrLinesData.Count} ERP PR Lines records and {uomMasterData.Count} UOM records for lookup.");
+        // Build PRTRANSID -> UOM lookup from TBL_PRTRANSACTION 
+        var prTransIdToUom = new Dictionary<int, string?>();
+        using (var prTransCmd = new SqlCommand("SELECT PRTRANSID, UOMCODE FROM TBL_PRTRANSACTION", sqlConn))
+        using (var prTransReader = await prTransCmd.ExecuteReaderAsync())
+        {
+            while (await prTransReader.ReadAsync())
+            {
+                int id = prTransReader.IsDBNull(0) ? 0 : prTransReader.GetInt32(0);
+                string? uom = prTransReader.IsDBNull(1) ? null : prTransReader.GetString(1);
+                if (id != 0)
+                    prTransIdToUom[id] = uom;
+            }
+        }
 
+        // Load UOM master data for UOM ID lookup
+        var uomMasterData = await LoadUomMasterDataAsync(pgConn, transaction);
+        _logger.LogInformation($"Loaded {uomMasterData.Count} UOM records for lookup.");
+
+        // Load valid event IDs from event_master
+        var validEventIds = await LoadValidEventIdsAsync(pgConn, transaction);
+        _logger.LogInformation($"Loaded {validEventIds.Count} valid event IDs from event_master.");
+
+        // ...existing code for reading from TBL_PB_BUYER...
         using var selectCmd = new SqlCommand(SelectQuery, sqlConn);
         selectCmd.CommandTimeout = 300;
-        
         using var reader = await selectCmd.ExecuteReaderAsync();
 
         while (await reader.ReadAsync())
@@ -182,7 +197,7 @@ ON CONFLICT (event_item_id) DO UPDATE SET
             var pbId = reader["PBID"] ?? DBNull.Value;
             var eventId = reader["EVENTID"] ?? DBNull.Value;
             var prTransId = reader["PRTRANSID"] ?? DBNull.Value;
-            
+
             // Validate required foreign keys
             if (eventId == DBNull.Value)
             {
@@ -190,7 +205,16 @@ ON CONFLICT (event_item_id) DO UPDATE SET
                 skippedCount++;
                 continue;
             }
-            
+
+            // Check if event_id exists in event_master
+            int eventIdValue = Convert.ToInt32(eventId);
+            if (!validEventIds.Contains(eventIdValue))
+            {
+                _logger.LogWarning($"Skipping PBID {pbId}: EVENTID {eventIdValue} not found in event_master.");
+                skippedCount++;
+                continue;
+            }
+
             if (prTransId == DBNull.Value)
             {
                 _logger.LogWarning($"Skipping PBID {pbId}: PRTRANSID is NULL.");
@@ -198,43 +222,44 @@ ON CONFLICT (event_item_id) DO UPDATE SET
                 continue;
             }
 
-            // Lookup material data from erp_pr_lines
             int prTransIdValue = Convert.ToInt32(prTransId);
-            string? materialCode = null;
-            string? materialShortText = null;
-            string? materialItemText = null;
-            string? materialPoDescription = null;
-            string? uomCode = null;
+            string? uomCode = prTransIdToUom.ContainsKey(prTransIdValue) ? prTransIdToUom[prTransIdValue] : null;
             int? uomId = null;
 
-            if (erpPrLinesData.ContainsKey(prTransIdValue))
+            // Lookup uomId from uom_master using uomCode
+            if (!string.IsNullOrEmpty(uomCode) && uomMasterData.ContainsKey(uomCode))
             {
-                var prLineData = erpPrLinesData[prTransIdValue];
-                materialCode = prLineData.MaterialCode;
-                materialShortText = prLineData.MaterialShortText;
-                materialItemText = prLineData.MaterialItemText;
-                materialPoDescription = prLineData.MaterialPoDescription;
-                uomCode = prLineData.UomCode;
-                
-                // Lookup UOM ID
-                if (!string.IsNullOrEmpty(uomCode) && uomMasterData.ContainsKey(uomCode))
-                {
-                    uomId = uomMasterData[uomCode];
-                }
+                uomId = uomMasterData[uomCode];
+            }
+
+            // Skip if UOM ID is not found (required field)
+            if (!uomId.HasValue)
+            {
+                _logger.LogWarning($"Skipping PBID {pbId}: UOM ID not found for UOM Code '{uomCode}'.");
+                skippedCount++;
+                continue;
             }
 
             var qty = reader["QTY"] ?? DBNull.Value;
             var clientSapId = reader["ClientSAPId"] ?? DBNull.Value;
+
+            // Skip if ClientSAPId is NULL or 0 (required field)
+            if (clientSapId == DBNull.Value || Convert.ToInt32(clientSapId) == 0)
+            {
+                _logger.LogWarning($"Skipping PBID {pbId}: ClientSAPId is NULL or 0.");
+                skippedCount++;
+                continue;
+            }
 
             var record = new Dictionary<string, object>
             {
                 ["event_item_id"] = pbId,
                 ["event_id"] = eventId,
                 ["erp_pr_lines_id"] = prTransId,
-                ["material_code"] = materialCode != null ? (object)materialCode : DBNull.Value,
-                ["material_short_text"] = materialShortText != null ? (object)materialShortText : DBNull.Value,
-                ["material_item_text"] = materialItemText != null ? (object)materialItemText : DBNull.Value,
-                ["material_po_description"] = materialPoDescription != null ? (object)materialPoDescription : DBNull.Value,
+                ["material_code"] = DBNull.Value, // Not mapped here
+                ["material_short_text"] = DBNull.Value,
+                ["material_item_text"] = DBNull.Value,
+                ["material_po_description"] = DBNull.Value,
                 ["uom_id"] = uomId.HasValue ? (object)uomId.Value : DBNull.Value,
                 ["uom_code"] = uomCode != null ? (object)uomCode : DBNull.Value,
                 ["company_id"] = clientSapId,
@@ -319,6 +344,22 @@ ON CONFLICT (event_item_id) DO UPDATE SET
         }
         
         return data;
+    }
+
+    private async Task<HashSet<int>> LoadValidEventIdsAsync(NpgsqlConnection pgConn, NpgsqlTransaction? transaction)
+    {
+        var validIds = new HashSet<int>();
+        var query = "SELECT event_id FROM event_master";
+        
+        using var cmd = new NpgsqlCommand(query, pgConn, transaction);
+        using var reader = await cmd.ExecuteReaderAsync();
+        
+        while (await reader.ReadAsync())
+        {
+            validIds.Add(reader.GetInt32(0));
+        }
+        
+        return validIds;
     }
 
     private async Task<int> InsertBatchAsync(NpgsqlConnection pgConn, List<Dictionary<string, object>> batch, NpgsqlTransaction? transaction, int batchNumber)
