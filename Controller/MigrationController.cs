@@ -80,6 +80,23 @@ public class MigrationController : Controller
         WorkflowAmountHistoryMigration workflowAmountHistoryMigration,
         WorkflowApprovalUserMigration workflowApprovalUserMigration,
         WorkflowApprovalUserHistoryMigration workflowApprovalUserHistoryMigration,
+        ARCMainMigration arcMainMigration,
+        ARCSubMigration arcSubMigration,
+        ARCPlantMigration arcPlantMigration,
+        ARCAttachmentMigration arcAttachmentMigration,
+        ARCApprovalAuthorityMigration arcApprovalAuthorityMigration,
+        PRAttachmentMigration prAttachmentMigration,
+        PRBoqItemsMigration prBoqItemsMigration,
+        TaxCodeMasterMigration taxCodeMasterMigration,
+        CompanyMasterMigration companyMasterMigration,
+        PurchaseOrganizationMasterMigration purchaseOrganizationMigration,
+        ValuationTypeMasterMigration valuationTypeMigration,
+        TypeOfCategoryMasterMigration typeOfCategoryMigration,
+        SupplierGroupMasterMigration supplierGroupMigration,
+        SupplierMasterMigration supplierMigration,
+        SupplierPaymentIncotermMigration supplierPaymentIncotermMigration,
+        SupplierInactiveMigration supplierInactiveMigration,
+        SupplierOtherContactMigration supplierOtherContactMigration,
         IHubContext<MigrationProgressHub> hubContext,
         IConfiguration configuration,
         EventSettingMigrationService eventSettingMigrationService,
@@ -107,6 +124,23 @@ public class MigrationController : Controller
         _workflowAmountHistoryMigration = workflowAmountHistoryMigration;
         _workflowApprovalUserMigration = workflowApprovalUserMigration;
         _workflowApprovalUserHistoryMigration = workflowApprovalUserHistoryMigration;
+        _arcMainMigration = arcMainMigration;
+        _arcSubMigration = arcSubMigration;
+        _arcPlantMigration = arcPlantMigration;
+        _arcAttachmentMigration = arcAttachmentMigration;
+        _arcApprovalAuthorityMigration = arcApprovalAuthorityMigration;
+        _prAttachmentMigration = prAttachmentMigration;
+        _prBoqItemsMigration = prBoqItemsMigration;
+        _taxCodeMasterMigration = taxCodeMasterMigration;
+        _companyMasterMigration = companyMasterMigration;
+        _purchaseOrganizationMigration = purchaseOrganizationMigration;
+        _valuationTypeMigration = valuationTypeMigration;
+        _typeOfCategoryMigration = typeOfCategoryMigration;
+        _supplierGroupMigration = supplierGroupMigration;
+        _supplierMigration = supplierMigration;
+        _supplierPaymentIncotermMigration = supplierPaymentIncotermMigration;
+        _supplierInactiveMigration = supplierInactiveMigration;
+        _supplierOtherContactMigration = supplierOtherContactMigration;
         _hubContext = hubContext;
         _configuration = configuration;
         _eventSettingMigrationService = eventSettingMigrationService;

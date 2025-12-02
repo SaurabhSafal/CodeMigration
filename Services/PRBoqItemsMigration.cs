@@ -98,6 +98,42 @@ INSERT INTO pr_boq_items (
         "Direct"  // deleted_date
     };
 
+    public override List<object> GetMappings()
+    {
+        return new List<object>
+        {
+            new { source = "ItemId", logic = "ItemId -> pr_boq_id (Direct)", target = "pr_boq_id" },
+            new { source = "PRTRANSID", logic = "PRTRANSID -> erp_pr_lines_id (Direct)", target = "erp_pr_lines_id" },
+            new { source = "ICode", logic = "ICode -> pr_boq_material_code (Direct)", target = "pr_boq_material_code" },
+            new { source = "IName", logic = "IName -> pr_boq_name (Direct)", target = "pr_boq_name" },
+            new { source = "IName", logic = "IName -> pr_boq_description (Direct)", target = "pr_boq_description" },
+            new { source = "IQty", logic = "IQty -> pr_boq_rem_qty (Direct)", target = "pr_boq_rem_qty" },
+            new { source = "-", logic = "pr_boq_status -> 1 (Fixed Default)", target = "pr_boq_status" },
+            new { source = "IUOM", logic = "IUOM -> pr_boq_uom_code (Direct)", target = "pr_boq_uom_code" },
+            new { source = "IQty", logic = "IQty -> pr_boq_qty (Direct)", target = "pr_boq_qty" },
+            new { source = "IRate", logic = "IRate -> pr_boq_rate (Direct)", target = "pr_boq_rate" },
+            new { source = "Remarks", logic = "Remarks -> pr_boq_remark (Direct)", target = "pr_boq_remark" },
+            new { source = "ICurrency", logic = "ICurrency -> pr_boq_currency (Direct)", target = "pr_boq_currency" },
+            new { source = "Line_Number", logic = "Line_Number -> pr_boq_line_number (Direct)", target = "pr_boq_line_number" },
+            new { source = "Prise_Unit", logic = "Prise_Unit -> pr_boq_unit_price (Direct)", target = "pr_boq_unit_price" },
+            new { source = "Net_Value_In_Document_Currency", logic = "Net_Value_In_Document_Currency -> pr_boq_total_value (Direct)", target = "pr_boq_total_value" },
+            new { source = "Material_Group", logic = "Material_Group -> pr_boq_material_group (Direct)", target = "pr_boq_material_group" },
+            new { source = "Serial_Number_For_Preq_Account", logic = "Serial_Number_For_Preq_Account -> pr_boq_serial_number_for_preq_account (Direct)", target = "pr_boq_serial_number_for_preq_account" },
+            new { source = "GL_Account", logic = "GL_Account -> pr_boq_gl_account (Direct)", target = "pr_boq_gl_account" },
+            new { source = "COST_CENTER", logic = "COST_CENTER -> pr_boq_cost_center (Direct)", target = "pr_boq_cost_center" },
+            new { source = "LONG_TEXT", logic = "LONG_TEXT -> pr_boq_long_text (Direct)", target = "pr_boq_long_text" },
+            new { source = "NETWORK", logic = "NETWORK -> pr_boq_network (Direct)", target = "pr_boq_network" },
+            new { source = "WBS_ELEMENT", logic = "WBS_ELEMENT -> pr_boq_wbs_element (Direct)", target = "pr_boq_wbs_element" },
+            new { source = "-", logic = "created_by -> 0 (Fixed Default)", target = "created_by" },
+            new { source = "-", logic = "created_date -> NULL (Fixed Default)", target = "created_date" },
+            new { source = "-", logic = "modified_by -> 0 (Fixed Default)", target = "modified_by" },
+            new { source = "-", logic = "modified_date -> NULL (Fixed Default)", target = "modified_date" },
+            new { source = "-", logic = "is_deleted -> false (Fixed Default)", target = "is_deleted" },
+            new { source = "-", logic = "deleted_by -> NULL (Fixed Default)", target = "deleted_by" },
+            new { source = "-", logic = "deleted_date -> NULL (Fixed Default)", target = "deleted_date" }
+        };
+    }
+
     public async Task<int> MigrateAsync()
     {
         return await base.MigrateAsync(useTransaction: true);

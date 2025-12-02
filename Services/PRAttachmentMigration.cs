@@ -80,6 +80,28 @@ ON CONFLICT (pr_attachment_id) DO UPDATE SET
         "Direct"  // deleted_date
     };
 
+    public override List<object> GetMappings()
+    {
+        return new List<object>
+        {
+            new { source = "PRATTACHMENTID", logic = "PRATTACHMENTID -> pr_attachment_id (Direct)", target = "pr_attachment_id" },
+            new { source = "PRTRANSID", logic = "PRTRANSID (from JOIN) -> erp_pr_lines_id (Direct)", target = "erp_pr_lines_id" },
+            new { source = "UPLOADPATH", logic = "UPLOADPATH -> upload_path (Direct)", target = "upload_path" },
+            new { source = "FILENAME", logic = "FILENAME -> file_name (Direct)", target = "file_name" },
+            new { source = "Remarks", logic = "Remarks -> remarks (Direct)", target = "remarks" },
+            new { source = "-", logic = "is_header_doc -> true (Fixed Default)", target = "is_header_doc" },
+            new { source = "PRATTACHMENTDATA", logic = "PRATTACHMENTDATA -> pr_attachment_data (Direct Binary)", target = "pr_attachment_data" },
+            new { source = "PR_ATTCHMNT_TYPE", logic = "PR_ATTCHMNT_TYPE -> pr_attachment_extensions (Direct)", target = "pr_attachment_extensions" },
+            new { source = "-", logic = "created_by -> 0 (Fixed Default)", target = "created_by" },
+            new { source = "-", logic = "created_date -> NULL (Fixed Default)", target = "created_date" },
+            new { source = "-", logic = "modified_by -> 0 (Fixed Default)", target = "modified_by" },
+            new { source = "-", logic = "modified_date -> NULL (Fixed Default)", target = "modified_date" },
+            new { source = "-", logic = "is_deleted -> false (Fixed Default)", target = "is_deleted" },
+            new { source = "-", logic = "deleted_by -> NULL (Fixed Default)", target = "deleted_by" },
+            new { source = "-", logic = "deleted_date -> NULL (Fixed Default)", target = "deleted_date" }
+        };
+    }
+
     public async Task<int> MigrateAsync()
     {
         return await base.MigrateAsync(useTransaction: true);
@@ -213,6 +235,17 @@ ON CONFLICT (pr_attachment_id) DO UPDATE SET
     {
         if (batch.Count == 0) return 0;
 
+        // Deduplicate by pr_attachment_id - keep last occurrence
+        var deduplicatedBatch = batch
+            .GroupBy(r => r["pr_attachment_id"])
+            .Select(g => g.Last())
+            .ToList();
+
+        if (deduplicatedBatch.Count < batch.Count)
+        {
+            _logger.LogWarning($"Batch {batchNumber}: Removed {batch.Count - deduplicatedBatch.Count} duplicate pr_attachment_id records. Processing {deduplicatedBatch.Count} unique records.");
+        }
+
         var columns = new List<string> {
             "pr_attachment_id", "erp_pr_lines_id", "upload_path", "file_name", "remarks", "is_header_doc", "pr_attachment_data", "pr_attachment_extensions", "created_by", "created_date", "modified_by", "modified_date", "is_deleted", "deleted_by", "deleted_date"
         };
@@ -221,7 +254,7 @@ ON CONFLICT (pr_attachment_id) DO UPDATE SET
         var parameters = new List<NpgsqlParameter>();
         int paramIndex = 0;
 
-        foreach (var record in batch)
+        foreach (var record in deduplicatedBatch)
         {
             var valuePlaceholders = new List<string>();
             foreach (var col in columns)
