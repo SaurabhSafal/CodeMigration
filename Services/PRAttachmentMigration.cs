@@ -103,9 +103,36 @@ INSERT INTO pr_attachments (
 
         while (await reader.ReadAsync())
         {
-            // Read all columns in sequential order BEFORE reading binary data
-            var prAttachmentId = reader["PRATTACHMENTID"] ?? DBNull.Value;
-            var prTransId = reader["PRTRANSID"] ?? DBNull.Value;
+            // Read all columns in STRICT SEQUENTIAL ORDER by ordinal (required for SequentialAccess)
+            // Column 0: PRATTACHMENTID
+            var prAttachmentId = reader.IsDBNull(0) ? DBNull.Value : (object)reader.GetInt32(0);
+            
+            // Column 1: PRID
+            var prId = reader.IsDBNull(1) ? DBNull.Value : (object)reader.GetInt32(1);
+            
+            // Column 2: UPLOADPATH
+            var uploadPath = reader.IsDBNull(2) ? DBNull.Value : (object)reader.GetString(2);
+            
+            // Column 3: FILENAME
+            var fileName = reader.IsDBNull(3) ? DBNull.Value : (object)reader.GetString(3);
+            
+            // Column 4: UPLOADEDBYID
+            var uploadedById = reader.IsDBNull(4) ? DBNull.Value : (object)reader.GetInt32(4);
+            
+            // Column 5: PRType
+            var prType = reader.IsDBNull(5) ? DBNull.Value : (object)reader.GetString(5);
+            
+            // Column 6: PRNo
+            var prNo = reader.IsDBNull(6) ? DBNull.Value : (object)reader.GetString(6);
+            
+            // Column 7: ItemCode
+            var itemCode = reader.IsDBNull(7) ? DBNull.Value : (object)reader.GetString(7);
+            
+            // Column 8: PRTRANSID (maps to erp_pr_lines_id)
+            var prTransId = reader.IsDBNull(8) ? DBNull.Value : (object)reader.GetInt32(8);
+            
+            // Column 9: Remarks
+            var remarks = reader.IsDBNull(9) ? DBNull.Value : (object)reader.GetString(9);
             
             // Validate ERP PR Lines ID (using PRTRANSID which maps to erp_pr_lines_id)
             if (prTransId != DBNull.Value)
@@ -117,6 +144,15 @@ INSERT INTO pr_attachments (
                 {
                     _logger.LogWarning($"Skipping PRATTACHMENTID {prAttachmentId}: ERP PR Lines ID {erpPrLinesId} not found in erp_pr_lines.");
                     skippedCount++;
+                    
+                    // Must continue reading remaining columns to avoid breaking SequentialAccess
+                    // Column 10: PRATTACHMENTDATA (binary - skip by checking IsDBNull)
+                    if (!reader.IsDBNull(10))
+                    {
+                        // Read and discard to advance the reader
+                        reader.GetBytes(10, 0, null, 0, 0);
+                    }
+                    // Skip remaining columns 11-18
                     continue;
                 }
             }
@@ -124,36 +160,50 @@ INSERT INTO pr_attachments (
             {
                 _logger.LogWarning($"Skipping PRATTACHMENTID {prAttachmentId}: ERP PR Lines ID (PRTRANSID) is NULL.");
                 skippedCount++;
+                
+                // Must continue reading remaining columns to avoid breaking SequentialAccess
+                // Column 10: PRATTACHMENTDATA (binary - skip by checking IsDBNull)
+                if (!reader.IsDBNull(10))
+                {
+                    // Read and discard to advance the reader
+                    reader.GetBytes(10, 0, null, 0, 0);
+                }
+                // Skip remaining columns 11-18
                 continue;
             }
             
-            var uploadPath = reader["UPLOADPATH"] ?? DBNull.Value;
-            var fileName = reader["FILENAME"] ?? DBNull.Value;
-            var uploadedById = reader["UPLOADEDBYID"] ?? DBNull.Value;
-            var prType = reader["PRType"] ?? DBNull.Value;
-            var prNo = reader["PRNo"] ?? DBNull.Value;
-            var itemCode = reader["ItemCode"] ?? DBNull.Value;
-            var remarks = reader["Remarks"] ?? DBNull.Value;
-            
-            // Now read binary data (column ordinal 10)
+            // Column 10: PRATTACHMENTDATA (binary data)
             byte[]? binaryData = null;
-            int prAttachmentDataOrdinal = reader.GetOrdinal("PRATTACHMENTDATA");
-            if (!reader.IsDBNull(prAttachmentDataOrdinal))
+            if (!reader.IsDBNull(10))
             {
-                long dataLength = reader.GetBytes(prAttachmentDataOrdinal, 0, null, 0, 0);
+                long dataLength = reader.GetBytes(10, 0, null, 0, 0);
                 binaryData = new byte[dataLength];
-                reader.GetBytes(prAttachmentDataOrdinal, 0, binaryData, 0, (int)dataLength);
+                reader.GetBytes(10, 0, binaryData, 0, (int)dataLength);
             }
             
-            // Read remaining columns after binary data
-            var prAttchmntType = reader["PR_ATTCHMNT_TYPE"] ?? DBNull.Value;
-            var createdBy = reader["created_by"] ?? DBNull.Value;
-            var createdDate = reader["created_date"] ?? DBNull.Value;
-            var modifiedBy = reader["modified_by"] ?? DBNull.Value;
-            var modifiedDate = reader["modified_date"] ?? DBNull.Value;
-            var isDeleted = Convert.ToInt32(reader["is_deleted"]) == 1;
-            var deletedBy = reader["deleted_by"] ?? DBNull.Value;
-            var deletedDate = reader["deleted_date"] ?? DBNull.Value;
+            // Column 11: PR_ATTCHMNT_TYPE
+            var prAttchmntType = reader.IsDBNull(11) ? DBNull.Value : (object)reader.GetString(11);
+            
+            // Column 12: created_by
+            var createdBy = reader.IsDBNull(12) ? DBNull.Value : (object)reader.GetInt32(12);
+            
+            // Column 13: created_date
+            var createdDate = reader.IsDBNull(13) ? DBNull.Value : (object)reader.GetDateTime(13);
+            
+            // Column 14: modified_by
+            var modifiedBy = reader.IsDBNull(14) ? DBNull.Value : (object)reader.GetInt32(14);
+            
+            // Column 15: modified_date
+            var modifiedDate = reader.IsDBNull(15) ? DBNull.Value : (object)reader.GetDateTime(15);
+            
+            // Column 16: is_deleted
+            var isDeleted = reader.GetInt32(16) == 1;
+            
+            // Column 17: deleted_by
+            var deletedBy = reader.IsDBNull(17) ? DBNull.Value : (object)reader.GetInt32(17);
+            
+            // Column 18: deleted_date
+            var deletedDate = reader.IsDBNull(18) ? DBNull.Value : (object)reader.GetDateTime(18);
 
             var record = new Dictionary<string, object>
             {
