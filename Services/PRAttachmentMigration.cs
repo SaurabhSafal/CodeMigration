@@ -8,7 +8,7 @@ using Microsoft.Extensions.Logging;
 
 public class PRAttachmentMigration : MigrationService
 {
-    private const int BATCH_SIZE = 500;
+    private const int BATCH_SIZE = 100; // Reduced for large binary data
     private readonly ILogger<PRAttachmentMigration> _logger;
 
     protected override string SelectQuery => @"
@@ -24,7 +24,7 @@ SELECT
     PRTRANSID,
     Remarks,
     PRATTACHMENTDATA,
-    PR_ATTCHMENT_TYPE,
+    PR_ATTCHMNT_TYPE,
     0 AS created_by,
     NULL AS created_date,
     0 AS modified_by,
@@ -78,27 +78,61 @@ INSERT INTO pr_attachments (
         var batch = new List<Dictionary<string, object>>();
 
         using var selectCmd = new SqlCommand(SelectQuery, sqlConn);
-        using var reader = await selectCmd.ExecuteReaderAsync();
+        selectCmd.CommandTimeout = 300; // Increase timeout for binary data
+        
+        using var reader = await selectCmd.ExecuteReaderAsync(System.Data.CommandBehavior.SequentialAccess);
 
         while (await reader.ReadAsync())
         {
+            // Read all columns in sequential order BEFORE reading binary data
+            var prAttachmentId = reader["PRATTACHMENTID"] ?? DBNull.Value;
+            var prId = reader["PRID"] ?? DBNull.Value;
+            var uploadPath = reader["UPLOADPATH"] ?? DBNull.Value;
+            var fileName = reader["FILENAME"] ?? DBNull.Value;
+            var uploadedById = reader["UPLOADEDBYID"] ?? DBNull.Value;
+            var prType = reader["PRType"] ?? DBNull.Value;
+            var prNo = reader["PRNo"] ?? DBNull.Value;
+            var itemCode = reader["ItemCode"] ?? DBNull.Value;
+            var prTransId = reader["PRTRANSID"] ?? DBNull.Value;
+            var remarks = reader["Remarks"] ?? DBNull.Value;
+            
+            // Now read binary data (column ordinal 10)
+            byte[]? binaryData = null;
+            int prAttachmentDataOrdinal = reader.GetOrdinal("PRATTACHMENTDATA");
+            if (!reader.IsDBNull(prAttachmentDataOrdinal))
+            {
+                long dataLength = reader.GetBytes(prAttachmentDataOrdinal, 0, null, 0, 0);
+                binaryData = new byte[dataLength];
+                reader.GetBytes(prAttachmentDataOrdinal, 0, binaryData, 0, (int)dataLength);
+            }
+            
+            // Read remaining columns after binary data
+            var prAttchmntType = reader["PR_ATTCHMNT_TYPE"] ?? DBNull.Value;
+            var createdBy = reader["created_by"] ?? DBNull.Value;
+            var createdDate = reader["created_date"] ?? DBNull.Value;
+            var modifiedBy = reader["modified_by"] ?? DBNull.Value;
+            var modifiedDate = reader["modified_date"] ?? DBNull.Value;
+            var isDeleted = Convert.ToInt32(reader["is_deleted"]) == 1;
+            var deletedBy = reader["deleted_by"] ?? DBNull.Value;
+            var deletedDate = reader["deleted_date"] ?? DBNull.Value;
+
             var record = new Dictionary<string, object>
             {
-                ["pr_attachment_id"] = reader["PRATTACHMENTID"] ?? DBNull.Value,
-                ["erp_pr_lines_id"] = reader["PRID"] ?? DBNull.Value,
-                ["upload_path"] = reader["UPLOADPATH"] ?? DBNull.Value,
-                ["file_name"] = reader["FILENAME"] ?? DBNull.Value,
-                ["remarks"] = reader["Remarks"] ?? DBNull.Value,
+                ["pr_attachment_id"] = prAttachmentId,
+                ["erp_pr_lines_id"] = prId,
+                ["upload_path"] = uploadPath,
+                ["file_name"] = fileName,
+                ["remarks"] = remarks,
                 ["is_header_doc"] = true,
-                ["pr_attachment_data"] = reader["PRATTACHMENTDATA"] ?? DBNull.Value,
-                ["pr_attachment_extensions"] = reader["PR_ATTCHMENT_TYPE"] ?? DBNull.Value,
-                ["created_by"] = reader["created_by"] ?? DBNull.Value,
-                ["created_date"] = reader["created_date"] ?? DBNull.Value,
-                ["modified_by"] = reader["modified_by"] ?? DBNull.Value,
-                ["modified_date"] = reader["modified_date"] ?? DBNull.Value,
-                ["is_deleted"] = Convert.ToInt32(reader["is_deleted"]) == 1,
-                ["deleted_by"] = reader["deleted_by"] ?? DBNull.Value,
-                ["deleted_date"] = reader["deleted_date"] ?? DBNull.Value
+                ["pr_attachment_data"] = binaryData != null ? (object)binaryData : DBNull.Value,
+                ["pr_attachment_extensions"] = prAttchmntType,
+                ["created_by"] = createdBy,
+                ["created_date"] = createdDate,
+                ["modified_by"] = modifiedBy,
+                ["modified_date"] = modifiedDate,
+                ["is_deleted"] = isDeleted,
+                ["deleted_by"] = deletedBy,
+                ["deleted_date"] = deletedDate
             };
 
             batch.Add(record);
@@ -144,7 +178,16 @@ INSERT INTO pr_attachments (
             {
                 var paramName = $"@p{paramIndex}";
                 valuePlaceholders.Add(paramName);
-                parameters.Add(new NpgsqlParameter(paramName, record[col] ?? DBNull.Value));
+                
+                // Optimize binary data parameter
+                if (col == "pr_attachment_data" && record[col] is byte[] binaryData)
+                {
+                    parameters.Add(new NpgsqlParameter(paramName, NpgsqlTypes.NpgsqlDbType.Bytea) { Value = binaryData });
+                }
+                else
+                {
+                    parameters.Add(new NpgsqlParameter(paramName, record[col] ?? DBNull.Value));
+                }
                 paramIndex++;
             }
             valueRows.Add($"({string.Join(", ", valuePlaceholders)})");
@@ -152,6 +195,7 @@ INSERT INTO pr_attachments (
 
         var sql = $"INSERT INTO pr_attachments ({string.Join(", ", columns)}) VALUES {string.Join(", ", valueRows)}";
         using var insertCmd = new NpgsqlCommand(sql, pgConn, transaction);
+        insertCmd.CommandTimeout = 300; // Increase timeout for binary inserts
         insertCmd.Parameters.AddRange(parameters.ToArray());
 
         int result = await insertCmd.ExecuteNonQueryAsync();

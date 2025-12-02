@@ -103,9 +103,27 @@ INSERT INTO pr_boq_items (
         return await base.MigrateAsync(useTransaction: true);
     }
 
+    private async Task<HashSet<int>> LoadValidErpPrLinesIdsAsync(NpgsqlConnection pgConn, NpgsqlTransaction? transaction)
+    {
+        var validIds = new HashSet<int>();
+        var query = "SELECT erp_pr_lines_id FROM erp_pr_lines";
+        using var cmd = new NpgsqlCommand(query, pgConn, transaction);
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            validIds.Add(reader.GetInt32(0));
+        }
+        return validIds;
+    }
+
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        // Load valid ERP PR Lines IDs
+        var validErpPrLinesIds = await LoadValidErpPrLinesIdsAsync(pgConn, transaction);
+        _logger.LogInformation($"Loaded {validErpPrLinesIds.Count} valid ERP PR Lines IDs from erp_pr_lines.");
+        
         int insertedCount = 0;
+        int skippedCount = 0;
         int batchNumber = 0;
         var batch = new List<Dictionary<string, object>>();
 
@@ -114,6 +132,28 @@ INSERT INTO pr_boq_items (
 
         while (await reader.ReadAsync())
         {
+            // Validate ERP PR Lines ID
+            var erpPrLinesIdValue = reader["PRID"];
+            if (erpPrLinesIdValue != DBNull.Value)
+            {
+                int erpPrLinesId = Convert.ToInt32(erpPrLinesIdValue);
+                
+                // Skip if ERP PR Lines ID not present in erp_pr_lines
+                if (!validErpPrLinesIds.Contains(erpPrLinesId))
+                {
+                    _logger.LogWarning($"Skipping ItemId {reader["ItemId"]}: ERP PR Lines ID {erpPrLinesId} not found in erp_pr_lines.");
+                    skippedCount++;
+                    continue;
+                }
+            }
+            else
+            {
+                _logger.LogWarning($"Skipping ItemId {reader["ItemId"]}: ERP PR Lines ID is NULL.");
+                skippedCount++;
+                continue;
+            }
+            
+
             var record = new Dictionary<string, object>
             {
                 ["pr_boq_id"] = reader["ItemId"] ?? DBNull.Value,
@@ -121,16 +161,16 @@ INSERT INTO pr_boq_items (
                 ["pr_boq_material_code"] = reader["ICode"] ?? DBNull.Value,
                 ["pr_boq_name"] = reader["IName"] ?? DBNull.Value,
                 ["pr_boq_description"] = DBNull.Value, // New column - not in source
-                ["pr_boq_rem_qty"] = DBNull.Value, // New column - not in source
+                ["pr_boq_rem_qty"] = 0, // Default to 0 as column has NOT NULL constraint
                 ["pr_boq_status"] = DBNull.Value, // New column - not in source
                 ["pr_boq_uom_code"] = reader["IUOM"] ?? DBNull.Value,
-                ["pr_boq_qty"] = reader["IQty"] ?? DBNull.Value,
-                ["pr_boq_rate"] = reader["IRate"] ?? DBNull.Value,
+                ["pr_boq_qty"] = reader["IQty"] != DBNull.Value ? Convert.ToDecimal(reader["IQty"]) : (object)DBNull.Value,
+                ["pr_boq_rate"] = reader["IRate"] != DBNull.Value ? Convert.ToDecimal(reader["IRate"]) : (object)DBNull.Value,
                 ["pr_boq_remark"] = reader["Remarks"] ?? DBNull.Value,
                 ["pr_boq_currency"] = reader["ICurrency"] ?? DBNull.Value,
                 ["pr_boq_line_number"] = reader["Line_Number"] ?? DBNull.Value,
-                ["pr_boq_unit_price"] = reader["Prise_Unit"] ?? DBNull.Value,
-                ["pr_boq_total_value"] = reader["Net_Value_In_Document_Currency"] ?? DBNull.Value,
+                ["pr_boq_unit_price"] = reader["Prise_Unit"] != DBNull.Value ? Convert.ToDecimal(reader["Prise_Unit"]) : (object)DBNull.Value,
+                ["pr_boq_total_value"] = reader["Net_Value_In_Document_Currency"] != DBNull.Value ? Convert.ToDecimal(reader["Net_Value_In_Document_Currency"]) : (object)DBNull.Value,
                 ["pr_boq_material_group"] = reader["Material_Group"] ?? DBNull.Value,
                 ["pr_boq_serial_number_for_preq_account"] = reader["Serial_Number_For_Preq_Account"] ?? DBNull.Value,
                 ["pr_boq_gl_account"] = reader["GL_Account"] ?? DBNull.Value,
@@ -167,7 +207,7 @@ INSERT INTO pr_boq_items (
             _logger.LogInformation($"Completed batch {batchNumber}. Total records inserted so far: {insertedCount}");
         }
 
-        _logger.LogInformation($"Migration finished. Total records inserted: {insertedCount}");
+        _logger.LogInformation($"Migration finished. Total records inserted: {insertedCount}, Skipped: {skippedCount}");
         return insertedCount;
     }
 
