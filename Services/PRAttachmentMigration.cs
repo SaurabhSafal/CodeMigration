@@ -13,18 +13,18 @@ public class PRAttachmentMigration : MigrationService
 
     protected override string SelectQuery => @"
 SELECT
-    PRATTACHMENTID,
-    PRID,
-    UPLOADPATH,
-    FILENAME,
-    UPLOADEDBYID,
-    PRType,
-    PRNo,
-    ItemCode,
-    PRTRANSID,
-    Remarks,
-    PRATTACHMENTDATA,
-    PR_ATTCHMNT_TYPE,
+    pa.PRATTACHMENTID,
+    pa.PRID,
+    pa.UPLOADPATH,
+    pa.FILENAME,
+    pa.UPLOADEDBYID,
+    pa.PRType,
+    pa.PRNo,
+    pa.ItemCode,
+    pt.PRTRANSID,
+    pa.Remarks,
+    pa.PRATTACHMENTDATA,
+    pa.PR_ATTCHMNT_TYPE,
     0 AS created_by,
     NULL AS created_date,
     0 AS modified_by,
@@ -32,7 +32,8 @@ SELECT
     0 AS is_deleted,
     NULL AS deleted_by,
     NULL AS deleted_date
-FROM TBL_PRATTACHMENT
+FROM TBL_PRATTACHMENT pa
+LEFT JOIN TBL_PRTRANSACTION pt ON pt.PRID = pa.PRID
 ";
 
     protected override string InsertQuery => @"
@@ -71,9 +72,27 @@ INSERT INTO pr_attachments (
         return await base.MigrateAsync(useTransaction: true);
     }
 
+    private async Task<HashSet<int>> LoadValidErpPrLinesIdsAsync(NpgsqlConnection pgConn, NpgsqlTransaction? transaction)
+    {
+        var validIds = new HashSet<int>();
+        var query = "SELECT erp_pr_lines_id FROM erp_pr_lines";
+        using var cmd = new NpgsqlCommand(query, pgConn, transaction);
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            validIds.Add(reader.GetInt32(0));
+        }
+        return validIds;
+    }
+
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        // Load valid ERP PR Lines IDs
+        var validErpPrLinesIds = await LoadValidErpPrLinesIdsAsync(pgConn, transaction);
+        _logger.LogInformation($"Loaded {validErpPrLinesIds.Count} valid ERP PR Lines IDs from erp_pr_lines.");
+        
         int insertedCount = 0;
+        int skippedCount = 0;
         int batchNumber = 0;
         var batch = new List<Dictionary<string, object>>();
 
@@ -86,14 +105,34 @@ INSERT INTO pr_attachments (
         {
             // Read all columns in sequential order BEFORE reading binary data
             var prAttachmentId = reader["PRATTACHMENTID"] ?? DBNull.Value;
-            var prId = reader["PRID"] ?? DBNull.Value;
+            var prTransId = reader["PRTRANSID"] ?? DBNull.Value;
+            
+            // Validate ERP PR Lines ID (using PRTRANSID which maps to erp_pr_lines_id)
+            if (prTransId != DBNull.Value)
+            {
+                int erpPrLinesId = Convert.ToInt32(prTransId);
+                
+                // Skip if ERP PR Lines ID not present in erp_pr_lines
+                if (!validErpPrLinesIds.Contains(erpPrLinesId))
+                {
+                    _logger.LogWarning($"Skipping PRATTACHMENTID {prAttachmentId}: ERP PR Lines ID {erpPrLinesId} not found in erp_pr_lines.");
+                    skippedCount++;
+                    continue;
+                }
+            }
+            else
+            {
+                _logger.LogWarning($"Skipping PRATTACHMENTID {prAttachmentId}: ERP PR Lines ID (PRTRANSID) is NULL.");
+                skippedCount++;
+                continue;
+            }
+            
             var uploadPath = reader["UPLOADPATH"] ?? DBNull.Value;
             var fileName = reader["FILENAME"] ?? DBNull.Value;
             var uploadedById = reader["UPLOADEDBYID"] ?? DBNull.Value;
             var prType = reader["PRType"] ?? DBNull.Value;
             var prNo = reader["PRNo"] ?? DBNull.Value;
             var itemCode = reader["ItemCode"] ?? DBNull.Value;
-            var prTransId = reader["PRTRANSID"] ?? DBNull.Value;
             var remarks = reader["Remarks"] ?? DBNull.Value;
             
             // Now read binary data (column ordinal 10)
@@ -119,7 +158,7 @@ INSERT INTO pr_attachments (
             var record = new Dictionary<string, object>
             {
                 ["pr_attachment_id"] = prAttachmentId,
-                ["erp_pr_lines_id"] = prId,
+                ["erp_pr_lines_id"] = prTransId,
                 ["upload_path"] = uploadPath,
                 ["file_name"] = fileName,
                 ["remarks"] = remarks,

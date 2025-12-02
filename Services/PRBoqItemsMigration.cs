@@ -132,8 +132,8 @@ INSERT INTO pr_boq_items (
 
         while (await reader.ReadAsync())
         {
-            // Validate ERP PR Lines ID
-            var erpPrLinesIdValue = reader["PRID"];
+            // Validate ERP PR Lines ID (using PRTRANSID which maps to erp_pr_lines_id)
+            var erpPrLinesIdValue = reader["PRTRANSID"];
             if (erpPrLinesIdValue != DBNull.Value)
             {
                 int erpPrLinesId = Convert.ToInt32(erpPrLinesIdValue);
@@ -157,7 +157,7 @@ INSERT INTO pr_boq_items (
             var record = new Dictionary<string, object>
             {
                 ["pr_boq_id"] = reader["ItemId"] ?? DBNull.Value,
-                ["erp_pr_lines_id"] = reader["PRID"] ?? DBNull.Value,
+                ["erp_pr_lines_id"] = reader["PRTRANSID"] ?? DBNull.Value,
                 ["pr_boq_material_code"] = reader["ICode"] ?? DBNull.Value,
                 ["pr_boq_name"] = reader["IName"] ?? DBNull.Value,
                 ["pr_boq_description"] = DBNull.Value, // New column - not in source
