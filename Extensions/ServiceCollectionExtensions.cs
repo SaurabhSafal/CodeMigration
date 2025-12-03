@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using DataMigration.Services;
 
 namespace Extensions;
 
@@ -32,6 +33,9 @@ public static class ServiceCollectionExtensions
         services.AddTransient<EventSettingMigrationService>();
         services.AddTransient<EventScheduleMigrationService>();
         services.AddTransient<EventScheduleHistoryMigrationService>();
+        services.AddTransient<ErpCurrencyExchangeRateMigration>();
+        services.AddTransient<AuctionMinMaxTargetPriceMigration>();
+        services.AddTransient<EventPriceBidColumnsMigration>();
 
         return services;
     }

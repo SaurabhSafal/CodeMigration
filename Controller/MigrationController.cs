@@ -38,6 +38,9 @@ public class MigrationController : Controller
     private readonly EventSettingMigrationService _eventSettingMigrationService;
     private readonly EventScheduleMigrationService _eventScheduleMigrationService;
     private readonly EventScheduleHistoryMigrationService _eventScheduleHistoryMigrationService;
+    private readonly ErpCurrencyExchangeRateMigration _erpCurrencyExchangeRateMigration;
+    private readonly AuctionMinMaxTargetPriceMigration _auctionMinMaxTargetPriceMigration;
+    private readonly EventPriceBidColumnsMigration _eventPriceBidColumnsMigration;
     private readonly ILogger<MigrationController> _logger;
 
 
@@ -69,6 +72,9 @@ public class MigrationController : Controller
         EventSettingMigrationService eventSettingMigrationService,
         EventScheduleMigrationService eventScheduleMigrationService,
         EventScheduleHistoryMigrationService eventScheduleHistoryMigrationService,
+        ErpCurrencyExchangeRateMigration erpCurrencyExchangeRateMigration,
+        AuctionMinMaxTargetPriceMigration auctionMinMaxTargetPriceMigration,
+        EventPriceBidColumnsMigration eventPriceBidColumnsMigration,
         ILogger<MigrationController> logger)
     {
         _uomMigration = uomMigration;
@@ -98,6 +104,9 @@ public class MigrationController : Controller
         _eventSettingMigrationService = eventSettingMigrationService;
         _eventScheduleMigrationService = eventScheduleMigrationService;
         _eventScheduleHistoryMigrationService = eventScheduleHistoryMigrationService;
+        _erpCurrencyExchangeRateMigration = erpCurrencyExchangeRateMigration;
+        _auctionMinMaxTargetPriceMigration = auctionMinMaxTargetPriceMigration;
+        _eventPriceBidColumnsMigration = eventPriceBidColumnsMigration;
         _logger = logger;
     }
 
@@ -137,6 +146,9 @@ public class MigrationController : Controller
             new { name = "eventsetting", description = "TBL_EVENTMASTER to event_setting" },
             new { name = "eventschedule", description = "TBL_EVENTSCHEDULEAR to event_schedule" },
             new { name = "eventschedulehistory", description = "TBL_EVENTSCHEDULEAR to event_schedule_history" },
+            new { name = "erpcurrencyexchangerate", description = "TBL_CurrencyConversionMaster to erp_currency_exchange_rate" },
+            new { name = "auctionminmaxtargetprice", description = "TBL_MinMaxTargetPrice to auction_min_max_target_price" },
+            new { name = "eventpricebidcolumns", description = "TBL_PB_BUYER to event_price_bid_columns (unpivot headers)" },
         };
         return Json(tables);
     }
@@ -267,6 +279,21 @@ public class MigrationController : Controller
         else if (table.ToLower() == "eventschedulehistory")
         {
             var mappings = _eventScheduleHistoryMigrationService.GetMappings();
+            return Json(mappings);
+        }
+        else if (table.ToLower() == "erpcurrencyexchangerate")
+        {
+            var mappings = _erpCurrencyExchangeRateMigration.GetMappings();
+            return Json(mappings);
+        }
+        else if (table.ToLower() == "auctionminmaxtargetprice")
+        {
+            var mappings = _auctionMinMaxTargetPriceMigration.GetMappings();
+            return Json(mappings);
+        }
+        else if (table.ToLower() == "eventpricebidcolumns")
+        {
+            var mappings = _eventPriceBidColumnsMigration.GetMappings();
             return Json(mappings);
         }
         return Json(new List<object>());
@@ -439,6 +466,18 @@ public class MigrationController : Controller
             else if (request.Table.ToLower() == "eventschedulehistory")
             {
                 recordCount = await _eventScheduleHistoryMigrationService.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "erpcurrencyexchangerate")
+            {
+                recordCount = await _erpCurrencyExchangeRateMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "auctionminmaxtargetprice")
+            {
+                recordCount = await _auctionMinMaxTargetPriceMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "eventpricebidcolumns")
+            {
+                recordCount = await _eventPriceBidColumnsMigration.MigrateAsync();
             }
             else
             {
@@ -1028,6 +1067,51 @@ public class MigrationController : Controller
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error occurred during event_setting migration.");
+            return StatusCode(500, new { Error = "An error occurred during migration." });
+        }
+    }
+
+    [HttpPost("erp-currency-exchange-rate/migrate")]
+    public async Task<IActionResult> MigrateErpCurrencyExchangeRate()
+    {
+        try
+        {
+            var migratedCount = await _erpCurrencyExchangeRateMigration.MigrateAsync();
+            return Ok(new { Message = $"Successfully migrated {migratedCount} erp_currency_exchange_rate records." });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error occurred during erp_currency_exchange_rate migration.");
+            return StatusCode(500, new { Error = "An error occurred during migration." });
+        }
+    }
+
+    [HttpPost("auction-min-max-target-price/migrate")]
+    public async Task<IActionResult> MigrateAuctionMinMaxTargetPrice()
+    {
+        try
+        {
+            var migratedCount = await _auctionMinMaxTargetPriceMigration.MigrateAsync();
+            return Ok(new { Message = $"Successfully migrated {migratedCount} auction_min_max_target_price records." });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error occurred during auction_min_max_target_price migration.");
+            return StatusCode(500, new { Error = "An error occurred during migration." });
+        }
+    }
+
+    [HttpPost("event-price-bid-columns/migrate")]
+    public async Task<IActionResult> MigrateEventPriceBidColumns()
+    {
+        try
+        {
+            var migratedCount = await _eventPriceBidColumnsMigration.MigrateAsync();
+            return Ok(new { Message = $"Successfully migrated {migratedCount} event_price_bid_columns source records (multiple rows generated)." });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error occurred during event_price_bid_columns migration.");
             return StatusCode(500, new { Error = "An error occurred during migration." });
         }
     }
