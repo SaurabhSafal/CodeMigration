@@ -67,6 +67,7 @@ public class MigrationController : Controller
     private readonly TermTemplateMasterMigration _termTemplateMasterMigration;
     private readonly UserPriceBidLotChargesMigration _userPriceBidLotChargesMigration;
     private readonly UserPriceBidNonPricingMigration _userPriceBidNonPricingMigration;
+    private readonly UserCompanyMasterMigration _userCompanyMasterMigration;
     private readonly IConfiguration _configuration;
     private readonly EventSettingMigrationService _eventSettingMigrationService;
     private readonly ILogger<MigrationController> _logger;
@@ -117,6 +118,7 @@ public class MigrationController : Controller
         TermTemplateMasterMigration termTemplateMasterMigration,
         UserPriceBidLotChargesMigration userPriceBidLotChargesMigration,
         UserPriceBidNonPricingMigration userPriceBidNonPricingMigration,
+        UserCompanyMasterMigration userCompanyMasterMigration,
         TaxCodeMasterMigration taxCodeMasterMigration,
         CompanyMasterMigration companyMasterMigration,
         PurchaseOrganizationMasterMigration purchaseOrganizationMigration,
@@ -176,6 +178,7 @@ public class MigrationController : Controller
         _termTemplateMasterMigration = termTemplateMasterMigration;
         _userPriceBidLotChargesMigration = userPriceBidLotChargesMigration;
         _userPriceBidNonPricingMigration = userPriceBidNonPricingMigration;
+        _userCompanyMasterMigration = userCompanyMasterMigration;
         _taxCodeMasterMigration = taxCodeMasterMigration;
         _companyMasterMigration = companyMasterMigration;
         _purchaseOrganizationMigration = purchaseOrganizationMigration;
@@ -236,7 +239,8 @@ public class MigrationController : Controller
             new {name = "termmaster", description = "TermMaster to term_master" },
             new {name = "termtemplatemaster", description = "TBL_CLAUSEMASTER to term_template_master" },
             new {name = "userpricebidlotcharges", description = "TBL_PB_BUYEROTHERCHARGES to user_price_bid_lot_charges" },
-            new {name = "userpricebidnonpricing", description = "TBL_PB_BUYEROTHERCHARGES to user_price_bid_lot_charges (Non Pricing)" },
+            new {name = "userpricebidnonpricing", description = "TBL_PB_BuyerNonPricing to user_price_bid_lot_charges (Non Pricing)" },
+            new {name = "usercompanymaster", description = "TBL_UserClientMaster to user_company_master" },
             new {name = "arcapprovalauthority", description = "TBL_ARCApprovalAuthority to arc_workflow" },
             new { name = "valuationtype", description = "TBL_ValuationTypeMaster to valuation_type_master" },
             new { name = "typeofcategory", description = "TBL_TypeOfCategoryMaster to type_of_category_master" },
@@ -519,6 +523,11 @@ public class MigrationController : Controller
             var mappings = _userPriceBidNonPricingMigration.GetMappings();
             return Json(mappings);
         }
+        else if (table.ToLower() == "usercompanymaster")
+        {
+            var mappings = _userCompanyMasterMigration.GetMappings();
+            return Json(mappings);
+        }
         else if (table.ToLower() == "arcapprovalauthority")
         {
             var mappings = _arcApprovalAuthorityMigration.GetMappings();
@@ -798,6 +807,14 @@ public class MigrationController : Controller
             else if (request.Table.ToLower() == "userpricebidnonpricing")
             {
                 recordCount = await _userPriceBidNonPricingMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "usercompanymaster")
+            {
+                recordCount = await _userCompanyMasterMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "usercompanymaster")
+            {
+                recordCount = await _userCompanyMasterMigration.MigrateAsync();
             }
             else if (request.Table.ToLower() == "arcapprovalauthority")
             {

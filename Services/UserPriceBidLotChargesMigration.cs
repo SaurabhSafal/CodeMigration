@@ -112,6 +112,14 @@ public class UserPriceBidLotChargesMigration : MigrationService
 
         try
         {
+            // Load valid event IDs
+            var validEventIds = await LoadValidEventIdsAsync(pgConn);
+            _logger.LogInformation($"Loaded {validEventIds.Count} valid event IDs");
+
+            // Load valid price_bid_charges IDs
+            var validPriceBidChargesIds = await LoadValidPriceBidChargesIdsAsync(pgConn);
+            _logger.LogInformation($"Loaded {validPriceBidChargesIds.Count} valid price_bid_charges IDs");
+
             using var sqlCommand = new SqlCommand(SelectQuery, sqlConn);
             sqlCommand.CommandTimeout = 300;
 
@@ -143,6 +151,30 @@ public class UserPriceBidLotChargesMigration : MigrationService
                 {
                     skippedRecords++;
                     continue;
+                }
+
+                // Validate event_id
+                if (eventId != DBNull.Value)
+                {
+                    int eventIdValue = Convert.ToInt32(eventId);
+                    if (!validEventIds.Contains(eventIdValue))
+                    {
+                        skippedRecords++;
+                        _logger.LogWarning($"Skipping PB_BuyerChargesId {pbBuyerChargesIdValue} - Invalid event_id: {eventIdValue}");
+                        continue;
+                    }
+                }
+
+                // Validate price_bid_charges_id
+                if (pbChargesId != DBNull.Value)
+                {
+                    int pbChargesIdValue = Convert.ToInt32(pbChargesId);
+                    if (!validPriceBidChargesIds.Contains(pbChargesIdValue))
+                    {
+                        skippedRecords++;
+                        _logger.LogWarning($"Skipping PB_BuyerChargesId {pbBuyerChargesIdValue} - Invalid price_bid_charges_id: {pbChargesIdValue}");
+                        continue;
+                    }
                 }
 
                 var record = new Dictionary<string, object>
@@ -187,6 +219,56 @@ public class UserPriceBidLotChargesMigration : MigrationService
             _logger.LogError(ex, "Error during User Price Bid Lot Charges migration");
             throw;
         }
+    }
+
+    private async Task<HashSet<int>> LoadValidEventIdsAsync(NpgsqlConnection pgConn)
+    {
+        var validIds = new HashSet<int>();
+
+        try
+        {
+            var query = "SELECT event_id FROM event_master WHERE event_id IS NOT NULL";
+            using var command = new NpgsqlCommand(query, pgConn);
+            using var reader = await command.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                validIds.Add(reader.GetInt32(0));
+            }
+
+            _logger.LogInformation($"Loaded {validIds.Count} valid event IDs from event_master");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error loading valid event IDs");
+        }
+
+        return validIds;
+    }
+
+    private async Task<HashSet<int>> LoadValidPriceBidChargesIdsAsync(NpgsqlConnection pgConn)
+    {
+        var validIds = new HashSet<int>();
+
+        try
+        {
+            var query = "SELECT price_bid_charges_id FROM price_bid_charges_master WHERE price_bid_charges_id IS NOT NULL";
+            using var command = new NpgsqlCommand(query, pgConn);
+            using var reader = await command.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                validIds.Add(reader.GetInt32(0));
+            }
+
+            _logger.LogInformation($"Loaded {validIds.Count} valid price_bid_charges IDs from price_bid_charges_master");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error loading valid price_bid_charges IDs");
+        }
+
+        return validIds;
     }
 
     private async Task<int> InsertBatchAsync(List<Dictionary<string, object>> batch, NpgsqlConnection pgConn, NpgsqlTransaction? transaction)
