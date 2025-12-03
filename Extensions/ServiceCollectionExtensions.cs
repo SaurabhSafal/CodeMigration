@@ -38,6 +38,12 @@ public static class ServiceCollectionExtensions
         services.AddTransient<EventPriceBidColumnsMigration>();
         services.AddTransient<EventFreezeCurrencyMigration>();
         services.AddTransient<EventPublishMigration>();
+        services.AddTransient<EventSupplierPriceBidMigration>();
+        services.AddTransient<EventSupplierLineItemMigration>();
+        services.AddTransient<SourceListMasterMigration>();
+        services.AddTransient<PriceBidChargesMasterMigration>();
+        services.AddTransient<PoHeaderMigration>();
+        services.AddTransient<PoLineMigration>();
 
         return services;
     }
