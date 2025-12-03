@@ -36,6 +36,8 @@ public class MigrationController : Controller
     private readonly IHubContext<MigrationProgressHub> _hubContext;
     private readonly IConfiguration _configuration;
     private readonly EventSettingMigrationService _eventSettingMigrationService;
+    private readonly EventScheduleMigrationService _eventScheduleMigrationService;
+    private readonly EventScheduleHistoryMigrationService _eventScheduleHistoryMigrationService;
     private readonly ILogger<MigrationController> _logger;
 
 
@@ -65,6 +67,8 @@ public class MigrationController : Controller
         IHubContext<MigrationProgressHub> hubContext,
         IConfiguration configuration,
         EventSettingMigrationService eventSettingMigrationService,
+        EventScheduleMigrationService eventScheduleMigrationService,
+        EventScheduleHistoryMigrationService eventScheduleHistoryMigrationService,
         ILogger<MigrationController> logger)
     {
         _uomMigration = uomMigration;
@@ -92,6 +96,8 @@ public class MigrationController : Controller
         _hubContext = hubContext;
         _configuration = configuration;
         _eventSettingMigrationService = eventSettingMigrationService;
+        _eventScheduleMigrationService = eventScheduleMigrationService;
+        _eventScheduleHistoryMigrationService = eventScheduleHistoryMigrationService;
         _logger = logger;
     }
 
@@ -129,6 +135,8 @@ public class MigrationController : Controller
             new { name = "workflowapprovaluser", description = "TBL_WorkFlowSubSub to workflow_approval_user" },
             new { name = "workflowapprovaluserhistory", description = "TBL_WorkFlowSubSub_History to workflow_approval_user_history" },
             new { name = "eventsetting", description = "TBL_EVENTMASTER to event_setting" },
+            new { name = "eventschedule", description = "TBL_EVENTSCHEDULEAR to event_schedule" },
+            new { name = "eventschedulehistory", description = "TBL_EVENTSCHEDULEAR to event_schedule_history" },
         };
         return Json(tables);
     }
@@ -249,6 +257,16 @@ public class MigrationController : Controller
         else if (table.ToLower() == "eventsetting")
         {
             var mappings = _eventSettingMigrationService.GetMappings();
+            return Json(mappings);
+        }
+        else if (table.ToLower() == "eventschedule")
+        {
+            var mappings = _eventScheduleMigrationService.GetMappings();
+            return Json(mappings);
+        }
+        else if (table.ToLower() == "eventschedulehistory")
+        {
+            var mappings = _eventScheduleHistoryMigrationService.GetMappings();
             return Json(mappings);
         }
         return Json(new List<object>());
@@ -413,6 +431,14 @@ public class MigrationController : Controller
             else if (request.Table.ToLower() == "eventsetting")
             {
                 recordCount = await _eventSettingMigrationService.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "eventschedule")
+            {
+                recordCount = await _eventScheduleMigrationService.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "eventschedulehistory")
+            {
+                recordCount = await _eventScheduleHistoryMigrationService.MigrateAsync();
             }
             else
             {

@@ -30,6 +30,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<WorkflowApprovalUserMigration>();
         services.AddScoped<WorkflowApprovalUserHistoryMigration>();
         services.AddTransient<EventSettingMigrationService>();
+        services.AddTransient<EventScheduleMigrationService>();
+        services.AddTransient<EventScheduleHistoryMigrationService>();
 
         return services;
     }
