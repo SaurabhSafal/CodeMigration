@@ -14,15 +14,15 @@ public class SupplierTermDeviationsMigration : MigrationService
 
     protected override string SelectQuery => @"
         SELECT
-            SupplierDEVIATIONTRNID,
-            SupplierDEVIATIONMSTID,
+            VENDORDEVIATIONTRNID,
+            VENDORDEVIATIONMSTID,
             DEVIATIONREMARKS,
             USERTYPE,
             ACTIONBY,
             ACTIONDATE,
             ISUPDATEDCLAUSE
         FROM TBL_VENDORDEVIATIONTRN
-        ORDER BY SupplierDEVIATIONTRNID";
+        ORDER BY VENDORDEVIATIONTRNID";
 
     protected override string InsertQuery => @"
         INSERT INTO supplier_term_deviations (
@@ -39,9 +39,6 @@ public class SupplierTermDeviationsMigration : MigrationService
             is_deleted,
             deleted_by,
             deleted_date,
-            acceptance_status,
-            accepted_by,
-            accepted_on,
             user_type
         ) VALUES (
             @supplier_term_deviation_id,
@@ -57,9 +54,6 @@ public class SupplierTermDeviationsMigration : MigrationService
             @is_deleted,
             @deleted_by,
             @deleted_date,
-            @acceptance_status,
-            @accepted_by,
-            @accepted_on,
             @user_type
         )
         ON CONFLICT (supplier_term_deviation_id) DO UPDATE SET
@@ -73,9 +67,6 @@ public class SupplierTermDeviationsMigration : MigrationService
             is_deleted = EXCLUDED.is_deleted,
             deleted_by = EXCLUDED.deleted_by,
             deleted_date = EXCLUDED.deleted_date,
-            acceptance_status = EXCLUDED.acceptance_status,
-            accepted_by = EXCLUDED.accepted_by,
-            accepted_on = EXCLUDED.accepted_on,
             user_type = EXCLUDED.user_type";
 
     public SupplierTermDeviationsMigration(IConfiguration configuration, ILogger<SupplierTermDeviationsMigration> logger) : base(configuration)
@@ -100,9 +91,6 @@ public class SupplierTermDeviationsMigration : MigrationService
             "Fixed",   // is_deleted
             "Fixed",   // deleted_by
             "Fixed",   // deleted_date
-            "Fixed",   // acceptance_status
-            "Fixed",   // accepted_by
-            "Fixed",   // accepted_on
             "Direct"   // user_type
         };
     }
@@ -111,8 +99,8 @@ public class SupplierTermDeviationsMigration : MigrationService
     {
         return new List<object>
         {
-            new { source = "SupplierDEVIATIONTRNID", logic = "SupplierDEVIATIONTRNID -> supplier_term_deviation_id (Primary key, autoincrement - SupplierTermDeviationId)", target = "supplier_term_deviation_id" },
-            new { source = "SupplierDEVIATIONMSTID", logic = "SupplierDEVIATIONMSTID -> supplier_term_id (Foreign key to supplier_terms - SupplierTermId)", target = "supplier_term_id" },
+            new { source = "VENDORDEVIATIONTRNID", logic = "VENDORDEVIATIONTRNID -> supplier_term_deviation_id (Primary key, autoincrement - SupplierTermDeviationId)", target = "supplier_term_deviation_id" },
+            new { source = "VENDORDEVIATIONMSTID", logic = "VENDORDEVIATIONMSTID -> supplier_term_id (Foreign key to supplier_terms - SupplierTermId)", target = "supplier_term_id" },
             new { source = "-", logic = "event_id -> Lookup from supplier_terms (EventId)", target = "event_id" },
             new { source = "DEVIATIONREMARKS", logic = "DEVIATIONREMARKS -> deviation_remarks (DEVIATIONREMARKS)", target = "deviation_remarks" },
             new { source = "ACTIONBY", logic = "ACTIONBY -> user_id (Foreign key to users - UserId)", target = "user_id" },
@@ -126,10 +114,7 @@ public class SupplierTermDeviationsMigration : MigrationService
             new { source = "-", logic = "modified_date -> NULL (Fixed Default)", target = "modified_date" },
             new { source = "-", logic = "is_deleted -> false (Fixed Default)", target = "is_deleted" },
             new { source = "-", logic = "deleted_by -> NULL (Fixed Default)", target = "deleted_by" },
-            new { source = "-", logic = "deleted_date -> NULL (Fixed Default)", target = "deleted_date" },
-            new { source = "-", logic = "acceptance_status -> NULL (Fixed Default)", target = "acceptance_status" },
-            new { source = "-", logic = "accepted_by -> NULL (Fixed Default)", target = "accepted_by" },
-            new { source = "-", logic = "accepted_on -> NULL (Fixed Default)", target = "accepted_on" }
+            new { source = "-", logic = "deleted_date -> NULL (Fixed Default)", target = "deleted_date" }
         };
     }
 
@@ -168,50 +153,50 @@ public class SupplierTermDeviationsMigration : MigrationService
             {
                 totalRecords++;
 
-                var supplierDeviationTrnId = reader["SupplierDEVIATIONTRNID"];
-                var supplierDeviationMstId = reader["SupplierDEVIATIONMSTID"];
+                var vendorDeviationTrnId = reader["VENDORDEVIATIONTRNID"];
+                var vendorDeviationMstId = reader["VENDORDEVIATIONMSTID"];
                 var deviationRemarks = reader["DEVIATIONREMARKS"];
                 var userType = reader["USERTYPE"];
                 var actionBy = reader["ACTIONBY"];
                 var actionDate = reader["ACTIONDATE"];
                 var isUpdatedClause = reader["ISUPDATEDCLAUSE"];
 
-                // Skip if SupplierDEVIATIONTRNID is NULL
-                if (supplierDeviationTrnId == DBNull.Value)
+                // Skip if VENDORDEVIATIONTRNID is NULL
+                if (vendorDeviationTrnId == DBNull.Value)
                 {
                     skippedRecords++;
-                    _logger.LogWarning("Skipping record - SupplierDEVIATIONTRNID is NULL");
+                    _logger.LogWarning("Skipping record - VENDORDEVIATIONTRNID is NULL");
                     continue;
                 }
 
-                int supplierDeviationTrnIdValue = Convert.ToInt32(supplierDeviationTrnId);
+                int vendorDeviationTrnIdValue = Convert.ToInt32(vendorDeviationTrnId);
 
                 // Skip duplicates
-                if (processedIds.Contains(supplierDeviationTrnIdValue))
+                if (processedIds.Contains(vendorDeviationTrnIdValue))
                 {
                     skippedRecords++;
                     continue;
                 }
 
                 // Skip if supplier_term_id is NULL (NOT NULL constraint)
-                if (supplierDeviationMstId == DBNull.Value)
+                if (vendorDeviationMstId == DBNull.Value)
                 {
                     skippedRecords++;
-                    _logger.LogWarning($"Skipping SupplierDEVIATIONTRNID {supplierDeviationTrnIdValue} - supplier_term_id is NULL");
+                    _logger.LogWarning($"Skipping VENDORDEVIATIONTRNID {vendorDeviationTrnIdValue} - supplier_term_id is NULL");
                     continue;
                 }
 
-                int supplierDeviationMstIdValue = Convert.ToInt32(supplierDeviationMstId);
+                int vendorDeviationMstIdValue = Convert.ToInt32(vendorDeviationMstId);
 
                 // Validate supplier_term_id and get related event_id and supplier_id
-                if (!supplierTermsMap.ContainsKey(supplierDeviationMstIdValue))
+                if (!supplierTermsMap.ContainsKey(vendorDeviationMstIdValue))
                 {
                     skippedRecords++;
-                    _logger.LogWarning($"Skipping SupplierDEVIATIONTRNID {supplierDeviationTrnIdValue} - Invalid supplier_term_id: {supplierDeviationMstIdValue}");
+                    _logger.LogWarning($"Skipping VENDORDEVIATIONTRNID {vendorDeviationTrnIdValue} - Invalid supplier_term_id: {vendorDeviationMstIdValue}");
                     continue;
                 }
 
-                var supplierTermData = supplierTermsMap[supplierDeviationMstIdValue];
+                var supplierTermData = supplierTermsMap[vendorDeviationMstIdValue];
 
                 // Validate user_id if not null
                 if (actionBy != DBNull.Value)
@@ -220,15 +205,15 @@ public class SupplierTermDeviationsMigration : MigrationService
                     if (!validUserIds.Contains(actionByValue))
                     {
                         skippedRecords++;
-                        _logger.LogWarning($"Skipping SupplierDEVIATIONTRNID {supplierDeviationTrnIdValue} - Invalid user_id: {actionByValue}");
+                        _logger.LogWarning($"Skipping VENDORDEVIATIONTRNID {vendorDeviationTrnIdValue} - Invalid user_id: {actionByValue}");
                         continue;
                     }
                 }
 
                 var record = new Dictionary<string, object>
                 {
-                    ["supplier_term_deviation_id"] = supplierDeviationTrnIdValue,
-                    ["supplier_term_id"] = supplierDeviationMstIdValue,
+                    ["supplier_term_deviation_id"] = vendorDeviationTrnIdValue,
+                    ["supplier_term_id"] = vendorDeviationMstIdValue,
                     ["event_id"] = supplierTermData.EventId.HasValue ? (object)supplierTermData.EventId.Value : DBNull.Value,
                     ["deviation_remarks"] = deviationRemarks ?? DBNull.Value,
                     ["user_id"] = actionBy ?? DBNull.Value,
@@ -240,14 +225,11 @@ public class SupplierTermDeviationsMigration : MigrationService
                     ["is_deleted"] = false,
                     ["deleted_by"] = DBNull.Value,
                     ["deleted_date"] = DBNull.Value,
-                    ["acceptance_status"] = DBNull.Value,
-                    ["accepted_by"] = DBNull.Value,
-                    ["accepted_on"] = DBNull.Value,
                     ["user_type"] = userType ?? DBNull.Value
                 };
 
                 batch.Add(record);
-                processedIds.Add(supplierDeviationTrnIdValue);
+                processedIds.Add(vendorDeviationTrnIdValue);
 
                 if (batch.Count >= BATCH_SIZE)
                 {
