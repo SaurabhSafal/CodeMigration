@@ -56,6 +56,8 @@ public class MigrationController : Controller
     private readonly EventBoqItemsMigration _eventBoqItemsMigration;
     private readonly AssignedEventVendorMigration _assignedEventVendorMigration;
     private readonly EventCollaborationMigration _eventCollaborationMigration;
+    private readonly UserTechnicalParameterMigration _userTechnicalParameterMigration;
+    private readonly UserTermMigration _userTermMigration;
     private readonly IConfiguration _configuration;
     private readonly EventSettingMigrationService _eventSettingMigrationService;
     private readonly ILogger<MigrationController> _logger;
@@ -95,6 +97,8 @@ public class MigrationController : Controller
         EventBoqItemsMigration eventBoqItemsMigration,
         AssignedEventVendorMigration assignedEventVendorMigration,
         EventCollaborationMigration eventCollaborationMigration,
+        UserTechnicalParameterMigration userTechnicalParameterMigration,
+        UserTermMigration userTermMigration,
         TaxCodeMasterMigration taxCodeMasterMigration,
         CompanyMasterMigration companyMasterMigration,
         PurchaseOrganizationMasterMigration purchaseOrganizationMigration,
@@ -143,6 +147,8 @@ public class MigrationController : Controller
         _eventBoqItemsMigration = eventBoqItemsMigration;
         _assignedEventVendorMigration = assignedEventVendorMigration;
         _eventCollaborationMigration = eventCollaborationMigration;
+        _userTechnicalParameterMigration = userTechnicalParameterMigration;
+        _userTermMigration = userTermMigration;
         _taxCodeMasterMigration = taxCodeMasterMigration;
         _companyMasterMigration = companyMasterMigration;
         _purchaseOrganizationMigration = purchaseOrganizationMigration;
@@ -193,6 +199,8 @@ public class MigrationController : Controller
             new {name = "eventboqitems", description = "TBL_PB_BUYER_SUB to event_boq_items" },
             new {name = "assignedeventvendor", description = "TBL_EVENTSELECTEDUSER (Vendor only) to assigned_event_vendor" },
             new {name = "eventcollaboration", description = "TBL_EVENTSELECTEDUSER (Non-Vendor) to event_collaboration" },
+            new {name = "usertechnicalparameter", description = "TBL_TechItemTerms to user_technical_parameter" },
+            new {name = "userterm", description = "TBL_CLAUSEEVENTWISE to user_term" },
             new {name = "arcapprovalauthority", description = "TBL_ARCApprovalAuthority to arc_workflow" },
             new { name = "valuationtype", description = "TBL_ValuationTypeMaster to valuation_type_master" },
             new { name = "typeofcategory", description = "TBL_TypeOfCategoryMaster to type_of_category_master" },
@@ -418,6 +426,16 @@ public class MigrationController : Controller
         else if (table.ToLower() == "eventcollaboration")
         {
             var mappings = _eventCollaborationMigration.GetMappings();
+            return Json(mappings);
+        }
+        else if (table.ToLower() == "usertechnicalparameter")
+        {
+            var mappings = _userTechnicalParameterMigration.GetMappings();
+            return Json(mappings);
+        }
+        else if (table.ToLower() == "userterm")
+        {
+            var mappings = _userTermMigration.GetMappings();
             return Json(mappings);
         }
         else if (table.ToLower() == "arcapprovalauthority")
@@ -655,6 +673,14 @@ public class MigrationController : Controller
             else if (request.Table.ToLower() == "eventcollaboration")
             {
                 recordCount = await _eventCollaborationMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "usertechnicalparameter")
+            {
+                recordCount = await _userTechnicalParameterMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "userterm")
+            {
+                recordCount = await _userTermMigration.MigrateAsync();
             }
             else if (request.Table.ToLower() == "arcapprovalauthority")
             {

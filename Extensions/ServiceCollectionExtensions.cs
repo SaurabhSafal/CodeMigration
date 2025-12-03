@@ -55,6 +55,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<EventBoqItemsMigration>();
         services.AddScoped<AssignedEventVendorMigration>();
         services.AddScoped<EventCollaborationMigration>();
+        services.AddScoped<UserTechnicalParameterMigration>();
+        services.AddScoped<UserTermMigration>();
 
         return services;
     }
