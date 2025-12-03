@@ -153,16 +153,21 @@ ON CONFLICT (technical_approval_workflow_id) DO UPDATE SET
                 }
             }
 
-            // Validate user_id exists in users table
-            if (approvalUserId != DBNull.Value)
+            // Validate user_id is not NULL (required field)
+            if (approvalUserId == DBNull.Value)
             {
-                int userIdValue = Convert.ToInt32(approvalUserId);
-                if (!validUserIds.Contains(userIdValue))
-                {
-                    _logger.LogWarning($"Skipping TechApprovalHistory_Id {techApprovalHistoryId}: user_id (ApprovalUserId) {userIdValue} not found in users.");
-                    skippedCount++;
-                    continue;
-                }
+                _logger.LogWarning($"Skipping TechApprovalHistory_Id {techApprovalHistoryId}: user_id (ApprovalUserId) is NULL.");
+                skippedCount++;
+                continue;
+            }
+
+            // Validate user_id exists in users table
+            int userIdValue = Convert.ToInt32(approvalUserId);
+            if (!validUserIds.Contains(userIdValue))
+            {
+                _logger.LogWarning($"Skipping TechApprovalHistory_Id {techApprovalHistoryId}: user_id (ApprovalUserId) {userIdValue} not found in users.");
+                skippedCount++;
+                continue;
             }
 
             var record = new Dictionary<string, object>

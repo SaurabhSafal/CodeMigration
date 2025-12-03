@@ -197,6 +197,16 @@ ON CONFLICT (technical_document_id) DO UPDATE SET
                 isVisibleToVendor = isViewVendorValue == 1;
             }
 
+            // Convert SELECTEDVENDOR text to integer for supplier_specific_document_id
+            object supplierSpecificDocumentId = DBNull.Value;
+            if (selectedVendor != DBNull.Value && !string.IsNullOrWhiteSpace(selectedVendor.ToString()))
+            {
+                if (int.TryParse(selectedVendor.ToString(), out int vendorId))
+                {
+                    supplierSpecificDocumentId = vendorId;
+                }
+            }
+
             var record = new Dictionary<string, object>
             {
                 ["technical_document_id"] = technicalAttachmentId,
@@ -208,7 +218,7 @@ ON CONFLICT (technical_document_id) DO UPDATE SET
                 ["user_type"] = userType,
                 ["document_name"] = docName,
                 ["remarks"] = remark,
-                ["supplier_specific_document_id"] = selectedVendor,
+                ["supplier_specific_document_id"] = supplierSpecificDocumentId,
                 ["supplier_specific_document_name"] = selectedVendorName,
                 ["pr_attachment_id"] = prAttachmentId,
                 ["is_visible_to_vendor"] = isVisibleToVendor,
