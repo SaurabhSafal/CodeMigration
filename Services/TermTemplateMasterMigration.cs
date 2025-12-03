@@ -15,7 +15,8 @@ public class TermTemplateMasterMigration : MigrationService
     protected override string SelectQuery => @"
         SELECT
             CLAUSE_MASTER_ID,
-            REF_KEY
+            REF_KEY,
+            DEFINATION
         FROM TBL_CLAUSEMASTER
         ORDER BY CLAUSE_MASTER_ID";
 
@@ -23,6 +24,7 @@ public class TermTemplateMasterMigration : MigrationService
         INSERT INTO term_template_master (
             term_template_master_id,
             term_template_name,
+            term_master_id,
             created_by,
             created_date,
             modified_by,
@@ -33,6 +35,7 @@ public class TermTemplateMasterMigration : MigrationService
         ) VALUES (
             @term_template_master_id,
             @term_template_name,
+            @term_master_id,
             @created_by,
             @created_date,
             @modified_by,
@@ -43,6 +46,7 @@ public class TermTemplateMasterMigration : MigrationService
         )
         ON CONFLICT (term_template_master_id) DO UPDATE SET
             term_template_name = EXCLUDED.term_template_name,
+            term_master_id = EXCLUDED.term_master_id,
             modified_by = EXCLUDED.modified_by,
             modified_date = EXCLUDED.modified_date,
             is_deleted = EXCLUDED.is_deleted,
@@ -60,6 +64,7 @@ public class TermTemplateMasterMigration : MigrationService
         {
             "Direct", // term_template_master_id
             "Direct", // term_template_name
+            "Query",  // term_master_id
             "Fixed",  // created_by
             "Fixed",  // created_date
             "Fixed",  // modified_by
@@ -75,7 +80,9 @@ public class TermTemplateMasterMigration : MigrationService
         return new List<object>
         {
             new { source = "CLAUSE_MASTER_ID", logic = "CLAUSE_MASTER_ID -> term_template_master_id (Primary key, autoincrement)", target = "term_template_master_id" },
-            new { source = "REF_KEY", logic = "REF_KEY -> term_template_name (Direct)", target = "term_template_name" },
+            new { source = "DEFINATION", logic = "DEFINATION -> term_template_name (TermTemplateName - Primary mapping)", target = "term_template_name" },
+            new { source = "REF_KEY", logic = "REF_KEY -> Used as fallback if DEFINATION is NULL", target = "-" },
+            new { source = "term_master", logic = "term_master_id -> First available ID from term_master table", target = "term_master_id" },
             new { source = "-", logic = "created_by -> NULL (Fixed Default)", target = "created_by" },
             new { source = "-", logic = "created_date -> NULL (Fixed Default)", target = "created_date" },
             new { source = "-", logic = "modified_by -> NULL (Fixed Default)", target = "modified_by" },
@@ -101,6 +108,15 @@ public class TermTemplateMasterMigration : MigrationService
 
         try
         {
+            // Load a valid term_master_id
+            int? termMasterId = await LoadTermMasterIdAsync(pgConn);
+            if (!termMasterId.HasValue)
+            {
+                _logger.LogError("No term_master_id found in term_master table. Cannot proceed with migration.");
+                return 0;
+            }
+            _logger.LogInformation($"Using term_master_id: {termMasterId.Value}");
+
             using var sqlCommand = new SqlCommand(SelectQuery, sqlConn);
             sqlCommand.CommandTimeout = 300;
 
@@ -115,6 +131,7 @@ public class TermTemplateMasterMigration : MigrationService
 
                 var clauseMasterId = reader["CLAUSE_MASTER_ID"];
                 var refKey = reader["REF_KEY"];
+                var defination = reader["DEFINATION"];
 
                 // Skip if CLAUSE_MASTER_ID is NULL
                 if (clauseMasterId == DBNull.Value)
@@ -133,10 +150,16 @@ public class TermTemplateMasterMigration : MigrationService
                     continue;
                 }
 
+                // Use DEFINATION for term_template_name, fallback to REF_KEY if NULL
+                var templateName = defination != DBNull.Value && !string.IsNullOrWhiteSpace(defination?.ToString()) 
+                    ? defination 
+                    : refKey ?? DBNull.Value;
+
                 var record = new Dictionary<string, object>
                 {
                     ["term_template_master_id"] = clauseMasterIdValue,
-                    ["term_template_name"] = refKey ?? DBNull.Value,
+                    ["term_template_name"] = templateName,
+                    ["term_master_id"] = termMasterId.Value,
                     ["created_by"] = DBNull.Value,
                     ["created_date"] = DBNull.Value,
                     ["modified_by"] = DBNull.Value,
@@ -172,6 +195,29 @@ public class TermTemplateMasterMigration : MigrationService
         {
             _logger.LogError(ex, "Error during Term Template Master migration");
             throw;
+        }
+    }
+
+    private async Task<int?> LoadTermMasterIdAsync(NpgsqlConnection pgConn)
+    {
+        try
+        {
+            var query = "SELECT term_master_id FROM term_master ORDER BY term_master_id LIMIT 1";
+            using var command = new NpgsqlCommand(query, pgConn);
+            var result = await command.ExecuteScalarAsync();
+
+            if (result != null && result != DBNull.Value)
+            {
+                return Convert.ToInt32(result);
+            }
+
+            _logger.LogWarning("No term_master_id found in term_master table");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error loading term_master_id");
+            return null;
         }
     }
 
