@@ -5,6 +5,7 @@ using Microsoft.Data.SqlClient;
 using Npgsql;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using System.Linq;
 
 public class EventBoqItemsMigration : MigrationService
 {
@@ -88,6 +89,11 @@ ON CONFLICT (event_boq_items_id) DO UPDATE SET
         int batchNumber = 0;
         var batch = new List<Dictionary<string, object>>();
 
+        // Load valid event IDs and event_item IDs
+        var validEventIds = await LoadValidEventIdsAsync(pgConn, transaction);
+        var validEventItemIds = await LoadValidEventItemIdsAsync(pgConn, transaction);
+        _logger.LogInformation($"Loaded {validEventIds.Count} valid event IDs and {validEventItemIds.Count} valid event_item IDs.");
+
         using var selectCmd = new SqlCommand(SelectQuery, sqlConn);
         selectCmd.CommandTimeout = 300;
         using var reader = await selectCmd.ExecuteReaderAsync();
@@ -110,6 +116,30 @@ ON CONFLICT (event_boq_items_id) DO UPDATE SET
                 _logger.LogWarning($"Skipping row: PBSubId is NULL.");
                 skippedCount++;
                 continue;
+            }
+
+            // Validate event_id (PBID) exists in event_master
+            if (pbId != DBNull.Value)
+            {
+                int eventIdValue = Convert.ToInt32(pbId);
+                if (!validEventIds.Contains(eventIdValue))
+                {
+                    _logger.LogWarning($"Skipping PBSubId {pbSubId}: event_id (PBID) {eventIdValue} not found in event_master.");
+                    skippedCount++;
+                    continue;
+                }
+            }
+
+            // Validate event_item_id (PBID) exists in event_items table
+            if (pbId != DBNull.Value)
+            {
+                int eventItemIdValue = Convert.ToInt32(pbId);
+                if (!validEventItemIds.Contains(eventItemIdValue))
+                {
+                    _logger.LogWarning($"Skipping PBSubId {pbSubId}: event_item_id (PBID) {eventItemIdValue} not found in event_items.");
+                    skippedCount++;
+                    continue;
+                }
             }
 
             var record = new Dictionary<string, object>
@@ -197,5 +227,37 @@ ON CONFLICT (event_boq_items_id) DO UPDATE SET {updateSet}";
         int result = await insertCmd.ExecuteNonQueryAsync();
         _logger.LogInformation($"Batch {batchNumber}: Inserted/Updated {result} records.");
         return result;
+    }
+
+    private async Task<HashSet<int>> LoadValidEventIdsAsync(NpgsqlConnection pgConn, NpgsqlTransaction? transaction)
+    {
+        var validIds = new HashSet<int>();
+        var query = "SELECT event_id FROM event_master";
+        
+        using var cmd = new NpgsqlCommand(query, pgConn, transaction);
+        using var reader = await cmd.ExecuteReaderAsync();
+        
+        while (await reader.ReadAsync())
+        {
+            validIds.Add(reader.GetInt32(0));
+        }
+        
+        return validIds;
+    }
+
+    private async Task<HashSet<int>> LoadValidEventItemIdsAsync(NpgsqlConnection pgConn, NpgsqlTransaction? transaction)
+    {
+        var validIds = new HashSet<int>();
+        var query = "SELECT event_item_id FROM event_items";
+        
+        using var cmd = new NpgsqlCommand(query, pgConn, transaction);
+        using var reader = await cmd.ExecuteReaderAsync();
+        
+        while (await reader.ReadAsync())
+        {
+            validIds.Add(reader.GetInt32(0));
+        }
+        
+        return validIds;
     }
 }

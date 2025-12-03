@@ -27,7 +27,7 @@ SELECT
     PRICEBIDSTATUS,
     RegrateTypeId,
     ISTECHAPPROVE,
-    ISSAROGATATEAPPROVE,
+    ISSAROGATEAPPROVE,
     REQUESTBYSAROGATE,
     VendorCurrencyId,
     TechRemarks,
