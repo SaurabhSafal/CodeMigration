@@ -59,6 +59,9 @@ public class MigrationController : Controller
     private readonly UserTechnicalParameterMigration _userTechnicalParameterMigration;
     private readonly UserTermMigration _userTermMigration;
     private readonly TechnicalApprovalWorkflowMigration _technicalApprovalWorkflowMigration;
+    private readonly TechnicalApprovalScoreMigration _technicalApprovalScoreMigration;
+    private readonly TechnicalApprovalScoreHistoryMigration _technicalApprovalScoreHistoryMigration;
+    private readonly TechnicalDocumentsMigration _technicalDocumentsMigration;
     private readonly IConfiguration _configuration;
     private readonly EventSettingMigrationService _eventSettingMigrationService;
     private readonly ILogger<MigrationController> _logger;
@@ -101,6 +104,9 @@ public class MigrationController : Controller
         UserTechnicalParameterMigration userTechnicalParameterMigration,
         UserTermMigration userTermMigration,
         TechnicalApprovalWorkflowMigration technicalApprovalWorkflowMigration,
+        TechnicalApprovalScoreMigration technicalApprovalScoreMigration,
+        TechnicalApprovalScoreHistoryMigration technicalApprovalScoreHistoryMigration,
+        TechnicalDocumentsMigration technicalDocumentsMigration,
         TaxCodeMasterMigration taxCodeMasterMigration,
         CompanyMasterMigration companyMasterMigration,
         PurchaseOrganizationMasterMigration purchaseOrganizationMigration,
@@ -152,6 +158,9 @@ public class MigrationController : Controller
         _userTechnicalParameterMigration = userTechnicalParameterMigration;
         _userTermMigration = userTermMigration;
         _technicalApprovalWorkflowMigration = technicalApprovalWorkflowMigration;
+        _technicalApprovalScoreMigration = technicalApprovalScoreMigration;
+        _technicalApprovalScoreHistoryMigration = technicalApprovalScoreHistoryMigration;
+        _technicalDocumentsMigration = technicalDocumentsMigration;
         _taxCodeMasterMigration = taxCodeMasterMigration;
         _companyMasterMigration = companyMasterMigration;
         _purchaseOrganizationMigration = purchaseOrganizationMigration;
@@ -205,6 +214,9 @@ public class MigrationController : Controller
             new {name = "usertechnicalparameter", description = "TBL_TechItemTerms to user_technical_parameter" },
             new {name = "userterm", description = "TBL_CLAUSEEVENTWISE to user_term" },
             new {name = "technicalapprovalworkflow", description = "TBL_TechnicalApproval_History to technical_approval_workflow" },
+            new {name = "technicalapprovalscore", description = "TBL_TechApproval to technical_approval_score" },
+            new {name = "technicalapprovalscorehistory", description = "TBL_TechApprovalScoreHistory to technical_approval_score_history" },
+            new {name = "technicaldocuments", description = "TBL_TECHNICALATTACHMENT to technical_documents" },
             new {name = "arcapprovalauthority", description = "TBL_ARCApprovalAuthority to arc_workflow" },
             new { name = "valuationtype", description = "TBL_ValuationTypeMaster to valuation_type_master" },
             new { name = "typeofcategory", description = "TBL_TypeOfCategoryMaster to type_of_category_master" },
@@ -445,6 +457,21 @@ public class MigrationController : Controller
         else if (table.ToLower() == "technicalapprovalworkflow")
         {
             var mappings = _technicalApprovalWorkflowMigration.GetMappings();
+            return Json(mappings);
+        }
+        else if (table.ToLower() == "technicalapprovalscore")
+        {
+            var mappings = _technicalApprovalScoreMigration.GetMappings();
+            return Json(mappings);
+        }
+        else if (table.ToLower() == "technicalapprovalscorehistory")
+        {
+            var mappings = _technicalApprovalScoreHistoryMigration.GetMappings();
+            return Json(mappings);
+        }
+        else if (table.ToLower() == "technicaldocuments")
+        {
+            var mappings = _technicalDocumentsMigration.GetMappings();
             return Json(mappings);
         }
         else if (table.ToLower() == "arcapprovalauthority")
@@ -694,6 +721,18 @@ public class MigrationController : Controller
             else if (request.Table.ToLower() == "technicalapprovalworkflow")
             {
                 recordCount = await _technicalApprovalWorkflowMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "technicalapprovalscore")
+            {
+                recordCount = await _technicalApprovalScoreMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "technicalapprovalscorehistory")
+            {
+                recordCount = await _technicalApprovalScoreHistoryMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "technicaldocuments")
+            {
+                recordCount = await _technicalDocumentsMigration.MigrateAsync();
             }
             else if (request.Table.ToLower() == "arcapprovalauthority")
             {

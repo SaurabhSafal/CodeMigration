@@ -24,7 +24,6 @@ SELECT
     ActionStatus,
     CreatedBy,
     CreatedDate,
-    IsTechnicalApproval,
     RecallUserId,
     RecallDatetime,
     IsAssign
@@ -130,7 +129,6 @@ ON CONFLICT (technical_approval_workflow_id) DO UPDATE SET
             var actionStatus = reader["ActionStatus"] ?? DBNull.Value;
             var createdBy = reader["CreatedBy"] ?? DBNull.Value;
             var createdDate = reader["CreatedDate"] ?? DBNull.Value;
-            var isTechnicalApproval = reader["IsTechnicalApproval"] ?? DBNull.Value;
             var recallUserId = reader["RecallUserId"] ?? DBNull.Value;
             var recallDatetime = reader["RecallDatetime"] ?? DBNull.Value;
             var isAssign = reader["IsAssign"] ?? DBNull.Value;
