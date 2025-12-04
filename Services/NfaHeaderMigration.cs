@@ -61,13 +61,19 @@ public class NfaHeaderMigration : MigrationService
             Meetingdeliverytimelineexpectation,
             Meetingqualityrequirement,
             PurchaseordershouldbeallottedtoL1supplier,
+            TechnicallyAppovedJustification,
+            CommerclalTCJustification,
+            MeetingdeliverytimelineexpectationJustification,
+            MeetingqualityrequirementJustification,
+            PurchaseordershouldbeallottedtoL1supplierJustification,
             StandAloneBriefNote,
             AdditionalDocument,
             SALES_PERSON,
             TELEPHONE,
             YOUR_REFERENCE,
             OUR_REFERENCE,
-            CurrencyId,
+            TBL_AWARDEVENTMAIN.CurrencyId,
+            TBL_EVENTSELECTEDUSER.VendorCurrencyId,
             TypeofCategory,
             POCreatedDate,
             ME2mScreenshotName,
@@ -78,6 +84,9 @@ public class NfaHeaderMigration : MigrationService
             BuyerRemarks,
             ApprovalStatus
         FROM TBL_AWARDEVENTMAIN
+        LEFT JOIN TBL_EVENTSELECTEDUSER ON TBL_EVENTSELECTEDUSER.EVENTID = TBL_AWARDEVENTMAIN.EventId 
+            AND TBL_EVENTSELECTEDUSER.USERID = TBL_AWARDEVENTMAIN.VendorId 
+            AND TBL_EVENTSELECTEDUSER.UserType = 'Vendor'
         ORDER BY AWARDEVENTMAINID";
 
     protected override string InsertQuery => @"
@@ -107,6 +116,7 @@ public class NfaHeaderMigration : MigrationService
             repeat_poid,
             summery_note,
             closing_negotiation_note,
+            arc_id,
             arcpo_id,
             header_note,
             nfa_for_review,
@@ -174,6 +184,7 @@ public class NfaHeaderMigration : MigrationService
             @repeat_poid,
             @summery_note,
             @closing_negotiation_note,
+            @arc_id,
             @arcpo_id,
             @header_note,
             @nfa_for_review,
@@ -241,6 +252,7 @@ public class NfaHeaderMigration : MigrationService
             repeat_poid = EXCLUDED.repeat_poid,
             summery_note = EXCLUDED.summery_note,
             closing_negotiation_note = EXCLUDED.closing_negotiation_note,
+            arc_id = EXCLUDED.arc_id,
             arcpo_id = EXCLUDED.arcpo_id,
             header_note = EXCLUDED.header_note,
             nfa_for_review = EXCLUDED.nfa_for_review,
@@ -310,6 +322,7 @@ public class NfaHeaderMigration : MigrationService
             "Direct",  // repeat_poid
             "Direct",  // summery_note
             "Direct",  // closing_negotiation_note
+            "Direct",  // arc_id
             "Direct",  // arcpo_id
             "Direct",  // header_note
             "Direct",  // nfa_for_review
@@ -363,11 +376,10 @@ public class NfaHeaderMigration : MigrationService
             new { source = "EventId", logic = "EventId -> event_id (Foreign key to event_master - EventId)", target = "event_id" },
             new { source = "VendorId", logic = "VendorId -> supplier_id (Foreign key to supplier_master - SupplierId)", target = "supplier_id" },
             new { source = "TotalLotCharges", logic = "TotalLotCharges -> lot_total (SubTotal)", target = "lot_total" },
-            new { source = "TotalCSValue", logic = "TotalCSValue -> total_before_tax (TotalNFAValue)", target = "total_before_tax" },
+            new { source = "ItemTotal, TotalDiscount, TotalLotCharges", logic = "(ItemTotal - TotalDiscount) + TotalLotCharges -> total_before_tax", target = "total_before_tax" },
             new { source = "TotalGSTAmount", logic = "TotalGSTAmount -> total_tax_value (TotalTaxValue)", target = "total_tax_value" },
-            new { source = "TotalLineOtherCharges", logic = "TotalLineOtherCharges -> total_after_tax (TotalItemOtherCharges)", target = "total_after_tax" },
-            new { source = "TotalDiscount", logic = "TotalDiscount -> item_total (DiscountValue)", target = "item_total" },
-            new { source = "ItemTotal", logic = "ItemTotal -> item_total (ItemTotal)", target = "item_total" },
+            new { source = "ItemTotal, TotalDiscount, TotalLotCharges, TotalGSTAmount", logic = "((ItemTotal - TotalDiscount) + TotalLotCharges) + TotalGSTAmount -> total_after_tax", target = "total_after_tax" },
+            new { source = "ItemTotal, TotalDiscount", logic = "ItemTotal - TotalDiscount -> item_total", target = "item_total" },
             new { source = "PaymentTermsId", logic = "PaymentTermsId -> payment_term_id (Foreign key to payment_term_master - PaymentTermId)", target = "payment_term_id" },
             new { source = "-", logic = "payment_term_code -> Lookup from payment_term_master (PaymentTermCode)", target = "payment_term_code" },
             new { source = "IncotermsId", logic = "IncotermsId -> incoterm_id (Foreign key to incoterm_master - IncoTermId)", target = "incoterm_id" },
@@ -384,7 +396,8 @@ public class NfaHeaderMigration : MigrationService
             new { source = "AWARDEVENTMAINREFID", logic = "AWARDEVENTMAINREFID -> repeat_poid (RepeatPOID)", target = "repeat_poid" },
             new { source = "SummaryNote", logic = "SummaryNote -> summery_note (SummeryNote)", target = "summery_note" },
             new { source = "ClosingNegotiationNote", logic = "ClosingNegotiationNote -> closing_negotiation_note (ClosingNegotiationNote)", target = "closing_negotiation_note" },
-            new { source = "ARCMainId", logic = "ARCMainId -> arcpo_id (ARCId - Primary, fallback to PRtoARCPOMAINId)", target = "arcpo_id" },
+            new { source = "ARCMainId", logic = "ARCMainId -> arc_id (ARCId)", target = "arc_id" },
+            new { source = "PRtoARCPOMAINId", logic = "PRtoARCPOMAINId -> arcpo_id (ARCPOId)", target = "arcpo_id" },
             new { source = "HeaderNote", logic = "HeaderNote -> header_note (HeaderNote)", target = "header_note" },
             new { source = "IsNFAChecked", logic = "IsNFAChecked -> nfa_for_review (NFAforReview)", target = "nfa_for_review" },
             new { source = "AttachmentPath", logic = "AttachmentPath -> auction_chart_file_path (AuctionChartFilePath)", target = "auction_chart_file_path" },
@@ -398,11 +411,11 @@ public class NfaHeaderMigration : MigrationService
             new { source = "Meetingdeliverytimelineexpectation", logic = "Meetingdeliverytimelineexpectation -> meeting_delivery_timeline_expectation (Meetingdeliverytimelineexpectation)", target = "meeting_delivery_timeline_expectation" },
             new { source = "Meetingqualityrequirement", logic = "Meetingqualityrequirement -> meeting_quality_requirement (Meetingqualityrequirement)", target = "meeting_quality_requirement" },
             new { source = "PurchaseordershouldbeallottedtoL1supplier", logic = "PurchaseordershouldbeallottedtoL1supplier -> purchase_order_should_be_allotted_to_l1_supplier (PurchaseordershouldbeallottedtoL1supplier)", target = "purchase_order_should_be_allotted_to_l1_supplier" },
-            new { source = "-", logic = "technically_appoved_justification -> NULL (Fixed Default)", target = "technically_appoved_justification" },
-            new { source = "-", logic = "commerclal_tc_justification -> NULL (Fixed Default)", target = "commerclal_tc_justification" },
-            new { source = "-", logic = "meeting_delivery_timeline_expectation_justification -> NULL (Fixed Default)", target = "meeting_delivery_timeline_expectation_justification" },
-            new { source = "-", logic = "meeting_quality_requirement_justification -> NULL (Fixed Default)", target = "meeting_quality_requirement_justification" },
-            new { source = "-", logic = "purchase_order_should_be_allotted_to_l1_supplier_justification -> NULL (Fixed Default)", target = "purchase_order_should_be_allotted_to_l1_supplier_justification" },
+            new { source = "TechnicallyAppovedJustification", logic = "TechnicallyAppovedJustification -> technically_appoved_justification", target = "technically_appoved_justification" },
+            new { source = "CommerclalTCJustification", logic = "CommerclalTCJustification -> commerclal_tc_justification", target = "commerclal_tc_justification" },
+            new { source = "MeetingdeliverytimelineexpectationJustification", logic = "MeetingdeliverytimelineexpectationJustification -> meeting_delivery_timeline_expectation_justification", target = "meeting_delivery_timeline_expectation_justification" },
+            new { source = "MeetingqualityrequirementJustification", logic = "MeetingqualityrequirementJustification -> meeting_quality_requirement_justification", target = "meeting_quality_requirement_justification" },
+            new { source = "PurchaseordershouldbeallottedtoL1supplierJustification", logic = "PurchaseordershouldbeallottedtoL1supplierJustification -> purchase_order_should_be_allotted_to_l1_supplier_justification", target = "purchase_order_should_be_allotted_to_l1_supplier_justification" },
             new { source = "StandAloneBriefNote", logic = "StandAloneBriefNote -> brief_note (BriefNote)", target = "brief_note" },
             new { source = "-", logic = "nfa_printt_file_path -> Empty/NULL (NFAPrintFilePath)", target = "nfa_printt_file_path" },
             new { source = "AdditionalDocument", logic = "AdditionalDocument -> nfa_printt_file_name (NFAPrintFileName)", target = "nfa_printt_file_name" },
@@ -410,7 +423,7 @@ public class NfaHeaderMigration : MigrationService
             new { source = "TELEPHONE", logic = "TELEPHONE -> sales_phone_number (SalesPhoneNumber)", target = "sales_phone_number" },
             new { source = "YOUR_REFERENCE", logic = "YOUR_REFERENCE -> your_referance (YourReference)", target = "your_referance" },
             new { source = "OUR_REFERENCE", logic = "OUR_REFERENCE -> our_referance (OurReference)", target = "our_referance" },
-            new { source = "CurrencyId", logic = "CurrencyId -> currency_id (Foreign key to currency_master - CurrencyId)", target = "currency_id" },
+            new { source = "CurrencyId, VendorCurrencyId", logic = "COALESCE(CurrencyId, VendorCurrencyId, 86) -> currency_id (Fallback: INR=86)", target = "currency_id" },
             new { source = "TypeofCategory", logic = "TypeofCategory -> type_of_category_id (Foreign key to type_of_category_master - TypeofCategoryId)", target = "type_of_category_id" },
             new { source = "POCreatedDate", logic = "POCreatedDate -> po_post_date (POPostDate)", target = "po_post_date" },
             new { source = "ME2mScreenshotName", logic = "ME2mScreenshotName -> price_variation_report_name (PriceVariationReportName)", target = "price_variation_report_name" },
@@ -522,6 +535,16 @@ public class NfaHeaderMigration : MigrationService
                     plantCode = plantCodes[Convert.ToInt32(plantId)];
                 }
 
+                // Calculate values
+                decimal itemTotal = reader["ItemTotal"] != DBNull.Value ? Convert.ToDecimal(reader["ItemTotal"]) : 0;
+                decimal totalDiscount = reader["TotalDiscount"] != DBNull.Value ? Convert.ToDecimal(reader["TotalDiscount"]) : 0;
+                decimal totalLotCharges = reader["TotalLotCharges"] != DBNull.Value ? Convert.ToDecimal(reader["TotalLotCharges"]) : 0;
+                decimal totalGSTAmount = reader["TotalGSTAmount"] != DBNull.Value ? Convert.ToDecimal(reader["TotalGSTAmount"]) : 0;
+                
+                decimal calculatedItemTotal = itemTotal - totalDiscount;
+                decimal calculatedTotalBeforeTax = calculatedItemTotal + totalLotCharges;
+                decimal calculatedTotalAfterTax = calculatedTotalBeforeTax + totalGSTAmount;
+
                 var record = new Dictionary<string, object>
                 {
                     ["nfa_header_id"] = awardEventMainIdValue,
@@ -529,10 +552,10 @@ public class NfaHeaderMigration : MigrationService
                     ["event_id"] = reader["EventId"] ?? DBNull.Value,
                     ["supplier_id"] = reader["VendorId"] ?? DBNull.Value,
                     ["lot_total"] = reader["TotalLotCharges"] ?? DBNull.Value,
-                    ["total_before_tax"] = reader["TotalCSValue"] ?? DBNull.Value,
+                    ["total_before_tax"] = calculatedTotalBeforeTax,
                     ["total_tax_value"] = reader["TotalGSTAmount"] ?? DBNull.Value,
-                    ["total_after_tax"] = reader["TotalLineOtherCharges"] ?? DBNull.Value,
-                    ["item_total"] = reader["ItemTotal"] ?? DBNull.Value,
+                    ["total_after_tax"] = calculatedTotalAfterTax,
+                    ["item_total"] = calculatedItemTotal,
                     ["payment_term_id"] = paymentTermId ?? DBNull.Value,
                     ["payment_term_code"] = paymentTermCode ?? (object)DBNull.Value,
                     ["incoterm_id"] = incotermId ?? DBNull.Value,
@@ -549,7 +572,8 @@ public class NfaHeaderMigration : MigrationService
                     ["repeat_poid"] = reader["AWARDEVENTMAINREFID"] ?? DBNull.Value,
                     ["summery_note"] = reader["SummaryNote"] ?? DBNull.Value,
                     ["closing_negotiation_note"] = reader["ClosingNegotiationNote"] ?? DBNull.Value,
-                    ["arcpo_id"] = reader["ARCMainId"] != DBNull.Value ? reader["ARCMainId"] : (reader["PRtoARCPOMAINId"] ?? DBNull.Value),
+                    ["arc_id"] = reader["ARCMainId"] ?? DBNull.Value,
+                    ["arcpo_id"] = reader["PRtoARCPOMAINId"] ?? DBNull.Value,
                     ["header_note"] = reader["HeaderNote"] ?? DBNull.Value,
                     ["nfa_for_review"] = reader["IsNFAChecked"] ?? DBNull.Value,
                     ["auction_chart_file_path"] = reader["AttachmentPath"] ?? DBNull.Value,
@@ -563,11 +587,11 @@ public class NfaHeaderMigration : MigrationService
                     ["meeting_delivery_timeline_expectation"] = reader["Meetingdeliverytimelineexpectation"] ?? DBNull.Value,
                     ["meeting_quality_requirement"] = reader["Meetingqualityrequirement"] ?? DBNull.Value,
                     ["purchase_order_should_be_allotted_to_l1_supplier"] = reader["PurchaseordershouldbeallottedtoL1supplier"] ?? DBNull.Value,
-                    ["technically_appoved_justification"] = DBNull.Value,
-                    ["commerclal_tc_justification"] = DBNull.Value,
-                    ["meeting_delivery_timeline_expectation_justification"] = DBNull.Value,
-                    ["meeting_quality_requirement_justification"] = DBNull.Value,
-                    ["purchase_order_should_be_allotted_to_l1_supplier_justification"] = DBNull.Value,
+                    ["technically_appoved_justification"] = reader["TechnicallyAppovedJustification"] ?? DBNull.Value,
+                    ["commerclal_tc_justification"] = reader["CommerclalTCJustification"] ?? DBNull.Value,
+                    ["meeting_delivery_timeline_expectation_justification"] = reader["MeetingdeliverytimelineexpectationJustification"] ?? DBNull.Value,
+                    ["meeting_quality_requirement_justification"] = reader["MeetingqualityrequirementJustification"] ?? DBNull.Value,
+                    ["purchase_order_should_be_allotted_to_l1_supplier_justification"] = reader["PurchaseordershouldbeallottedtoL1supplierJustification"] ?? DBNull.Value,
                     ["brief_note"] = reader["StandAloneBriefNote"] ?? DBNull.Value,
                     ["nfa_printt_file_path"] = DBNull.Value,
                     ["nfa_printt_file_name"] = reader["AdditionalDocument"] ?? DBNull.Value,
@@ -575,7 +599,11 @@ public class NfaHeaderMigration : MigrationService
                     ["sales_phone_number"] = reader["TELEPHONE"] ?? DBNull.Value,
                     ["your_referance"] = reader["YOUR_REFERENCE"] ?? DBNull.Value,
                     ["our_referance"] = reader["OUR_REFERENCE"] ?? DBNull.Value,
-                    ["currency_id"] = reader["CurrencyId"] ?? DBNull.Value,
+                    ["currency_id"] = reader["CurrencyId"] != DBNull.Value && Convert.ToInt32(reader["CurrencyId"]) > 0 
+                        ? reader["CurrencyId"] 
+                        : (reader["VendorCurrencyId"] != DBNull.Value && Convert.ToInt32(reader["VendorCurrencyId"]) > 0 
+                            ? reader["VendorCurrencyId"] 
+                            : (object)86),
                     ["type_of_category_id"] = reader["TypeofCategory"] ?? DBNull.Value,
                     ["po_post_date"] = reader["POCreatedDate"] ?? DBNull.Value,
                     ["price_variation_report_name"] = reader["ME2mScreenshotName"] ?? DBNull.Value,
