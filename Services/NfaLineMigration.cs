@@ -247,7 +247,7 @@ public class NfaLineMigration : MigrationService
             new { source = "ValuationTypeId", logic = "ValuationTypeId -> valuation_type_id (Foreign key to valuation_type_master)", target = "valuation_type_id" },
             new { source = "ItemCode", logic = "ItemCode -> material_code (MaterialCode)", target = "material_code" },
             new { source = "ItemName", logic = "ItemName -> material_name (MaterialName)", target = "material_name" },
-            new { source = "Uomid", logic = "Uomid -> uom_id (Foreign key to uom_master)", target = "uom_id" },
+            new { source = "UOM", logic = "UOM -> uom_id (Lookup from uom_master via uom_code)", target = "uom_id" },
             new { source = "POReferanceID", logic = "POReferanceID -> repeat_poid (RepeatPOID)", target = "repeat_poid" },
             new { source = "POSubReferanceID", logic = "POSubReferanceID -> repeat_po_line_id (RepeatPOLineId)", target = "repeat_po_line_id" },
             new { source = "EVENTITEMSID", logic = "EVENTITEMSID (TBL_PB_BUYER.PBID) -> event_item_id (Foreign key to event_items)", target = "event_item_id" },
@@ -278,6 +278,10 @@ public class NfaLineMigration : MigrationService
             // Load PO Condition arrays for each AwardEventItem
             var poConditionArrays = await LoadPoConditionArraysAsync(sqlConn);
             _logger.LogInformation($"Loaded {poConditionArrays.Count} PO condition arrays");
+
+            // Load UOM code to ID mapping from PostgreSQL
+            var uomCodeMap = await LoadUomCodeMapAsync(pgConn);
+            _logger.LogInformation($"Loaded {uomCodeMap.Count} UOM code mappings");
 
             using var sqlCommand = new SqlCommand(SelectQuery, sqlConn);
             sqlCommand.CommandTimeout = 300;
@@ -319,14 +323,19 @@ public class NfaLineMigration : MigrationService
                     continue;
                 }
 
-                // Get event_id from JOIN
-                var eventId = reader["EventId"];
-                if (eventId == DBNull.Value)
+                // Verify nfa_header_id exists in nfa_header table
+                int awardEventMainIdValue = Convert.ToInt32(awardEventMainId);
+                bool headerExists = await VerifyNfaHeaderExistsAsync(pgConn, awardEventMainIdValue);
+                if (!headerExists)
                 {
                     skippedRecords++;
-                    _logger.LogWarning($"Skipping record {awardEventItemValue} - EventId is NULL");
+                    _logger.LogWarning($"Skipping record {awardEventItemValue} - nfa_header_id {awardEventMainIdValue} does not exist in nfa_header table");
                     continue;
                 }
+
+                // Get event_id from JOIN, default to 0 if NULL
+                var eventId = reader["EventId"];
+                int eventIdValue = (eventId == DBNull.Value) ? 0 : Convert.ToInt32(eventId);
 
                 // Get values for calculations
                 decimal eventPrice = reader["EVENTPRICE"] != DBNull.Value ? Convert.ToDecimal(reader["EVENTPRICE"]) : 0;
@@ -344,11 +353,31 @@ public class NfaLineMigration : MigrationService
                 // tax_amount = ((EVENTPRICE - (EVENTPRICE * DiscountPer / 100)) * AssignQty) * GSTPer / 100
                 decimal taxAmount = itemTotal * gstPer / 100;
 
+                // Lookup uom_id from uom_master using UOM code
+                var uomCode = reader["UOM"];
+                int? uomId = null;
+                if (uomCode != DBNull.Value && !string.IsNullOrEmpty(uomCode.ToString()))
+                {
+                    string uomCodeStr = uomCode.ToString()!.Trim();
+                    if (uomCodeMap.ContainsKey(uomCodeStr))
+                    {
+                        uomId = uomCodeMap[uomCodeStr];
+                    }
+                }
+
+                // Skip record if uom_id is not found
+                if (!uomId.HasValue)
+                {
+                    skippedRecords++;
+                    _logger.LogWarning($"Skipping record {awardEventItemValue} - Could not find uom_id for UOM code: {uomCode}");
+                    continue;
+                }
+
                 var record = new Dictionary<string, object>
                 {
                     ["nfa_line_id"] = awardEventItemValue,
                     ["nfa_header_id"] = awardEventMainId,
-                    ["event_id"] = eventId,
+                    ["event_id"] = eventIdValue,
                     ["erp_pr_lines_id"] = reader["PRTRANSID"] ?? DBNull.Value,
                     ["uom_code"] = reader["UOM"] ?? DBNull.Value,
                     ["event_qty"] = reader["EVENTQTY"] ?? DBNull.Value,
@@ -368,7 +397,7 @@ public class NfaLineMigration : MigrationService
                     ["valuation_type_id"] = reader["ValuationTypeId"] ?? DBNull.Value,
                     ["material_code"] = reader["ItemCode"] ?? DBNull.Value,
                     ["material_name"] = reader["ItemName"] ?? DBNull.Value,
-                    ["uom_id"] = reader["Uomid"] ?? DBNull.Value,
+                    ["uom_id"] = uomId.Value,
                     ["repeat_poid"] = reader["POReferanceID"] ?? DBNull.Value,
                     ["repeat_po_line_id"] = reader["POSubReferanceID"] ?? DBNull.Value,
                     ["event_item_id"] = reader["EVENTITEMSID"] ?? DBNull.Value,
@@ -412,6 +441,48 @@ public class NfaLineMigration : MigrationService
             _logger.LogError(ex, "Error during NFA Line migration");
             throw;
         }
+    }
+
+    private async Task<bool> VerifyNfaHeaderExistsAsync(NpgsqlConnection pgConn, int nfaHeaderId)
+    {
+        try
+        {
+            var query = "SELECT EXISTS(SELECT 1 FROM nfa_header WHERE nfa_header_id = @nfaHeaderId)";
+            using var command = new NpgsqlCommand(query, pgConn);
+            command.Parameters.AddWithValue("@nfaHeaderId", nfaHeaderId);
+            var result = await command.ExecuteScalarAsync();
+            return result != null && (bool)result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"Error verifying nfa_header_id {nfaHeaderId} exists");
+            return false;
+        }
+    }
+
+    private async Task<Dictionary<string, int>> LoadUomCodeMapAsync(NpgsqlConnection pgConn)
+    {
+        var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var query = "SELECT uom_id, uom_code FROM uom_master WHERE uom_id IS NOT NULL AND uom_code IS NOT NULL";
+            using var command = new NpgsqlCommand(query, pgConn);
+            using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                int uomId = reader.GetInt32(0);
+                string uomCode = reader.GetString(1).Trim();
+                if (!map.ContainsKey(uomCode))
+                {
+                    map[uomCode] = uomId;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error loading UOM code mapping");
+        }
+        return map;
     }
 
     private async Task<Dictionary<int, int[]>> LoadPoConditionArraysAsync(SqlConnection sqlConn)

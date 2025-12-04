@@ -19,7 +19,7 @@ public class NfaLotChargesMigration : MigrationService
 
     protected override string SelectQuery => @"
         SELECT
-            TBL_AWARDEVENTLOTCHARGES.AwardEventLotChargesId,
+            TBL_AWARDEVENTLOTCHARGES.AwardEventLotChargeId,
             TBL_AWARDEVENTLOTCHARGES.AWARDEVENTMAINID,
             TBL_AWARDEVENTLOTCHARGES.PB_BuyerChargesId,
             TBL_AWARDEVENTLOTCHARGES.Percentage,
@@ -28,7 +28,7 @@ public class NfaLotChargesMigration : MigrationService
             TBL_AWARDEVENTLOTCHARGES.GSTPer,
             TBL_AWARDEVENTLOTCHARGES.GSTAmount
         FROM TBL_AWARDEVENTLOTCHARGES
-        ORDER BY TBL_AWARDEVENTLOTCHARGES.AwardEventLotChargesId";
+        ORDER BY TBL_AWARDEVENTLOTCHARGES.AwardEventLotChargeId";
 
     protected override string InsertQuery => @"
         INSERT INTO nfa_lot_charges (
@@ -116,7 +116,7 @@ public class NfaLotChargesMigration : MigrationService
     {
         return new List<object>
         {
-            new { source = "AwardEventLotChargesId", logic = "AwardEventLotChargesId -> nfa_lot_charges_id (Primary key autoincrement)", target = "nfa_lot_charges_id" },
+            new { source = "AwardEventLotChargeId", logic = "AwardEventLotChargeId -> nfa_lot_charges_id (Primary key autoincrement)", target = "nfa_lot_charges_id" },
             new { source = "AWARDEVENTMAINID", logic = "AWARDEVENTMAINID -> nfa_header_id (Foreign key to nfa_header - NFAHeaderId)", target = "nfa_header_id" },
             new { source = "PB_BuyerChargesId", logic = "PB_BuyerChargesId -> user_price_bid_lot_charges_id (Foreign key to user_price_bid_lot_charges - UserPriceBidLotChargesID)", target = "user_price_bid_lot_charges_id" },
             new { source = "PB_BuyerChargesId", logic = "PB_BuyerChargesId -> price_bid_charges_id (Lookup from price_bid_charges_master - PriceBidChargesId)", target = "price_bid_charges_id" },
@@ -165,13 +165,13 @@ public class NfaLotChargesMigration : MigrationService
             {
                 totalRecords++;
 
-                var awardEventLotChargesId = reader["AwardEventLotChargesId"];
+                var awardEventLotChargesId = reader["AwardEventLotChargeId"];
 
-                // Skip if AwardEventLotChargesId is NULL
+                // Skip if AwardEventLotChargeId is NULL
                 if (awardEventLotChargesId == DBNull.Value)
                 {
                     skippedRecords++;
-                    _logger.LogWarning("Skipping record - AwardEventLotChargesId is NULL");
+                    _logger.LogWarning("Skipping record - AwardEventLotChargeId is NULL");
                     continue;
                 }
 
