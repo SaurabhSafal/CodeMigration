@@ -49,6 +49,15 @@ public static class ServiceCollectionExtensions
         services.AddTransient<SupplierPriceBidLotChargesMigration>();
         services.AddTransient<SupplierPriceBidLotPriceMigration>();
         services.AddTransient<SupplierPriceBidDocumentMigration>();
+        services.AddTransient<SupplierPriceBoqItemsMigration>();
+        services.AddTransient<SupplierPriceBidNonPricingMigration>();
+        services.AddTransient<EventCommunicationSenderMigration>();
+        services.AddTransient<EventCommunicationReceiverMigration>();
+        services.AddTransient<EventCommunicationAttachmentMigration>();
+        services.AddTransient<NfaClarificationMigration>();
+        services.AddTransient<NfaBoqItemsMigration>();
+        services.AddTransient<NfaAttachmentsMigration>();
+        services.AddTransient<NfaPoConditionMigration>();
 
         return services;
     }
