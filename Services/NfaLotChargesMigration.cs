@@ -193,17 +193,45 @@ public class NfaLotChargesMigration : MigrationService
                     continue;
                 }
 
+                // Verify nfa_header_id exists in nfa_header table
+                int awardEventMainIdValue = Convert.ToInt32(awardEventMainId);
+                bool headerExists = await VerifyNfaHeaderExistsAsync(pgConn, awardEventMainIdValue);
+                if (!headerExists)
+                {
+                    skippedRecords++;
+                    _logger.LogWarning($"Skipping record {awardEventLotChargesIdValue} - nfa_header_id {awardEventMainIdValue} does not exist in nfa_header table");
+                    continue;
+                }
+
                 // Lookup price_bid_charges_id from user_price_bid_lot_charges
                 var pbBuyerChargesId = reader["PB_BuyerChargesId"];
                 int? priceBidChargesId = null;
-                if (pbBuyerChargesId != DBNull.Value && priceBidChargesMap.ContainsKey(Convert.ToInt32(pbBuyerChargesId)))
+                
+                // Skip if PB_BuyerChargesId is NULL or 0
+                if (pbBuyerChargesId == DBNull.Value || Convert.ToInt32(pbBuyerChargesId) == 0)
                 {
-                    priceBidChargesId = priceBidChargesMap[Convert.ToInt32(pbBuyerChargesId)];
+                    skippedRecords++;
+                    _logger.LogWarning($"Skipping record {awardEventLotChargesIdValue} - PB_BuyerChargesId is NULL or 0");
+                    continue;
+                }
+                
+                int pbBuyerChargesIdValue = Convert.ToInt32(pbBuyerChargesId);
+                if (priceBidChargesMap.ContainsKey(pbBuyerChargesIdValue))
+                {
+                    priceBidChargesId = priceBidChargesMap[pbBuyerChargesIdValue];
+                }
+                
+                // Skip if price_bid_charges_id lookup failed
+                if (!priceBidChargesId.HasValue)
+                {
+                    skippedRecords++;
+                    _logger.LogWarning($"Skipping record {awardEventLotChargesIdValue} - Could not find price_bid_charges_id for PB_BuyerChargesId: {pbBuyerChargesIdValue}");
+                    continue;
                 }
 
-                // Lookup tax_master_id from tax_master via GSTPer
+                // Lookup tax_master_id from tax_master via GSTPer, default to 0 if not found
                 var gstPer = reader["GSTPer"];
-                int? taxMasterId = null;
+                int taxMasterId = 0;
                 if (gstPer != DBNull.Value)
                 {
                     decimal gstPerValue = Convert.ToDecimal(gstPer);
@@ -229,7 +257,7 @@ public class NfaLotChargesMigration : MigrationService
                     ["charges_name"] = reader["ChargesName"] ?? DBNull.Value,
                     ["tax_percentage"] = reader["GSTPer"] ?? DBNull.Value,
                     ["tax_amount"] = reader["GSTAmount"] ?? DBNull.Value,
-                    ["tax_master_id"] = taxMasterId.HasValue ? (object)taxMasterId.Value : DBNull.Value,
+                    ["tax_master_id"] = taxMasterId,
                     ["total_lot_charges_amount"] = totalLotChargesAmount,
                     ["created_by"] = DBNull.Value,
                     ["created_date"] = DBNull.Value,
@@ -266,6 +294,23 @@ public class NfaLotChargesMigration : MigrationService
         {
             _logger.LogError(ex, "Error during NFA Lot Charges migration");
             throw;
+        }
+    }
+
+    private async Task<bool> VerifyNfaHeaderExistsAsync(NpgsqlConnection pgConn, int nfaHeaderId)
+    {
+        try
+        {
+            var query = "SELECT EXISTS(SELECT 1 FROM nfa_header WHERE nfa_header_id = @nfaHeaderId)";
+            using var command = new NpgsqlCommand(query, pgConn);
+            command.Parameters.AddWithValue("@nfaHeaderId", nfaHeaderId);
+            var result = await command.ExecuteScalarAsync();
+            return result != null && (bool)result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"Error verifying nfa_header_id {nfaHeaderId} exists");
+            return false;
         }
     }
 
