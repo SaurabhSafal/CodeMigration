@@ -353,23 +353,46 @@ public class NfaLineMigration : MigrationService
                 // tax_amount = ((EVENTPRICE - (EVENTPRICE * DiscountPer / 100)) * AssignQty) * GSTPer / 100
                 decimal taxAmount = itemTotal * gstPer / 100;
 
-                // Lookup uom_id from uom_master using UOM code
-                var uomCode = reader["UOM"];
+                // First try to lookup uom_id from uom_master using Uomid from source
+                var sourceUomId = reader["Uomid"];
                 int? uomId = null;
-                if (uomCode != DBNull.Value && !string.IsNullOrEmpty(uomCode.ToString()))
+                string? uomCodeValue = null;
+                
+                if (sourceUomId != DBNull.Value && Convert.ToInt32(sourceUomId) > 0)
                 {
-                    string uomCodeStr = uomCode.ToString()!.Trim();
-                    if (uomCodeMap.ContainsKey(uomCodeStr))
+                    int sourceUomIdValue = Convert.ToInt32(sourceUomId);
+                    // Check if this Uomid exists in uom_master
+                    var checkQuery = "SELECT uom_code FROM uom_master WHERE uom_id = @uomId";
+                    using var checkCmd = new NpgsqlCommand(checkQuery, pgConn);
+                    checkCmd.Parameters.AddWithValue("@uomId", sourceUomIdValue);
+                    var result = await checkCmd.ExecuteScalarAsync();
+                    if (result != null)
                     {
-                        uomId = uomCodeMap[uomCodeStr];
+                        uomId = sourceUomIdValue;
+                        uomCodeValue = result.ToString();
+                    }
+                }
+                
+                // If Uomid lookup failed, try UOM code lookup
+                if (!uomId.HasValue)
+                {
+                    var uomCode = reader["UOM"];
+                    if (uomCode != DBNull.Value && !string.IsNullOrEmpty(uomCode.ToString()))
+                    {
+                        string uomCodeStr = uomCode.ToString()!.Trim();
+                        if (uomCodeMap.ContainsKey(uomCodeStr))
+                        {
+                            uomId = uomCodeMap[uomCodeStr];
+                            uomCodeValue = uomCodeStr;
+                        }
                     }
                 }
 
-                // Skip record if uom_id is not found
+                // Skip record if uom_id is still not found
                 if (!uomId.HasValue)
                 {
                     skippedRecords++;
-                    _logger.LogWarning($"Skipping record {awardEventItemValue} - Could not find uom_id for UOM code: {uomCode}");
+                    _logger.LogWarning($"Skipping record {awardEventItemValue} - Could not find uom_id for Uomid: {sourceUomId} or UOM code: {reader["UOM"]}");
                     continue;
                 }
 
@@ -379,7 +402,7 @@ public class NfaLineMigration : MigrationService
                     ["nfa_header_id"] = awardEventMainId,
                     ["event_id"] = eventIdValue,
                     ["erp_pr_lines_id"] = reader["PRTRANSID"] ?? DBNull.Value,
-                    ["uom_code"] = reader["UOM"] ?? DBNull.Value,
+                    ["uom_code"] = uomCodeValue ?? (reader["UOM"] != DBNull.Value ? reader["UOM"] : DBNull.Value),
                     ["event_qty"] = reader["EVENTQTY"] ?? DBNull.Value,
                     ["unit_price"] = eventPrice,
                     ["item_total"] = itemTotal,
