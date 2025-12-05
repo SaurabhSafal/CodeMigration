@@ -14,16 +14,18 @@ public class EventBoqItemsMigration : MigrationService
 
     protected override string SelectQuery => @"
 SELECT
-    PBSubId,
-    PBID,
-    PRBOQID,
-    ItemId,
-    ItemCode,
-    ItemName,
-    UOM,
-    Rate,
-    Quantity
-FROM TBL_PB_BUYER_SUB
+    sub.PBSubId,
+    sub.PBID,
+    sub.PRBOQID,
+    sub.ItemId,
+    sub.ItemCode,
+    sub.ItemName,
+    sub.UOM,
+    sub.Rate,
+    sub.Quantity,
+    buyer.EVENTID
+FROM TBL_PB_BUYER_SUB sub
+INNER JOIN TBL_PB_BUYER buyer ON buyer.PBID = sub.PBID
 ";
 
     protected override string InsertQuery => @"
@@ -66,7 +68,7 @@ ON CONFLICT (event_boq_items_id) DO UPDATE SET
         {
             new { source = "PBSubId", logic = "PBSubId -> event_boq_items_id (Direct)", target = "event_boq_items_id" },
             new { source = "PBID", logic = "PBID -> event_item_id (Direct)", target = "event_item_id" },
-            new { source = "PBID", logic = "PBID -> event_id (Direct, from UserPriceBid/EventItemsID)", target = "event_id" },
+            new { source = "EVENTID", logic = "EVENTID -> event_id (JOIN with TBL_PB_BUYER on PBID)", target = "event_id" },
             new { source = "PRBOQID", logic = "PRBOQID -> pr_boq_id (Direct)", target = "pr_boq_id" },
             new { source = "ItemCode", logic = "ItemCode -> material_code (Direct)", target = "material_code" },
             new { source = "ItemName", logic = "ItemName -> material_name (Direct)", target = "material_name" },
@@ -102,6 +104,7 @@ ON CONFLICT (event_boq_items_id) DO UPDATE SET
         {
             var pbSubId = reader["PBSubId"] ?? DBNull.Value;
             var pbId = reader["PBID"] ?? DBNull.Value;
+            var eventId = reader["EVENTID"] ?? DBNull.Value;
             var prBoqId = reader["PRBOQID"] ?? DBNull.Value;
             var itemId = reader["ItemId"] ?? DBNull.Value;
             var itemCode = reader["ItemCode"] ?? DBNull.Value;
@@ -118,13 +121,13 @@ ON CONFLICT (event_boq_items_id) DO UPDATE SET
                 continue;
             }
 
-            // Validate event_id (PBID) exists in event_master
-            if (pbId != DBNull.Value)
+            // Validate event_id (EVENTID) exists in event_master
+            if (eventId != DBNull.Value)
             {
-                int eventIdValue = Convert.ToInt32(pbId);
+                int eventIdValue = Convert.ToInt32(eventId);
                 if (!validEventIds.Contains(eventIdValue))
                 {
-                    _logger.LogWarning($"Skipping PBSubId {pbSubId}: event_id (PBID) {eventIdValue} not found in event_master.");
+                    _logger.LogWarning($"Skipping PBSubId {pbSubId}: event_id (EVENTID) {eventIdValue} not found in event_master.");
                     skippedCount++;
                     continue;
                 }
@@ -146,7 +149,7 @@ ON CONFLICT (event_boq_items_id) DO UPDATE SET
             {
                 ["event_boq_items_id"] = pbSubId,
                 ["event_item_id"] = pbId,
-                ["event_id"] = pbId, // As per mapping, PBID is used for both event_item_id and event_id
+                ["event_id"] = eventId, // Now using EVENTID from TBL_PB_BUYER
                 ["pr_boq_id"] = prBoqId,
                 ["material_code"] = itemCode,
                 ["material_name"] = itemName,

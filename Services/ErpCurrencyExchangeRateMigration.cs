@@ -69,9 +69,7 @@ namespace DataMigration.Services
                     return 0;
                 }
 
-                // Use the first company_id as default since MSSQL table doesn't have company_id
-                var defaultCompanyId = validCompanyIds.First();
-                _logger.LogInformation($"Using default company_id: {defaultCompanyId}");
+                _logger.LogInformation($"Found {validCompanyIds.Count} companies. Will insert each record for all companies.");
 
                 // Fetch data from SQL Server
                 var sourceData = new List<(int RecId, string? FromCurrency, string? ToCurrency, decimal? ExchangeRate, DateTime? FromDate)>();
@@ -101,106 +99,118 @@ namespace DataMigration.Services
 
                 foreach (var record in sourceData)
                 {
-                    try
+                    var fromCurrency = GetStringValue(record.FromCurrency, 10);
+                    var toCurrency = GetStringValue(record.ToCurrency, 10);
+                    var validFrom = GetDateTimeValue(record.FromDate) ?? DateTime.UtcNow;
+                    var exchangeRate = record.ExchangeRate ?? 1.0m;
+
+                    // Insert for each company
+                    foreach (var companyId in validCompanyIds)
                     {
-                        // Check if record already exists
-                        int? existingRecordId = null;
-                        using (var checkCmd = new NpgsqlCommand(
-                            "SELECT erp_currency_exchange_rate_id FROM erp_currency_exchange_rate WHERE erp_currency_exchange_rate_id = @Id",
-                            pgConnection))
+                        try
                         {
-                            checkCmd.Parameters.AddWithValue("@Id", record.RecId);
-                            var result = await checkCmd.ExecuteScalarAsync();
-                            if (result != null && result != DBNull.Value)
+                            // Check if record already exists for this company
+                            int? existingRecordId = null;
+                            using (var checkCmd = new NpgsqlCommand(
+                                "SELECT erp_currency_exchange_rate_id FROM erp_currency_exchange_rate WHERE erp_currency_exchange_rate_id = @Id AND company_id = @CompanyId",
+                                pgConnection))
                             {
-                                existingRecordId = Convert.ToInt32(result);
+                                checkCmd.Parameters.AddWithValue("@Id", record.RecId);
+                                checkCmd.Parameters.AddWithValue("@CompanyId", companyId);
+                                var result = await checkCmd.ExecuteScalarAsync();
+                                if (result != null && result != DBNull.Value)
+                                {
+                                    existingRecordId = Convert.ToInt32(result);
+                                }
                             }
+
+                            if (existingRecordId.HasValue)
+                            {
+                                // Update existing record
+                                using var updateCmd = new NpgsqlCommand(
+                                    @"UPDATE erp_currency_exchange_rate SET
+                                        from_currency = @FromCurrency,
+                                        to_currency = @ToCurrency,
+                                        valid_from = @ValidFrom,
+                                        exchange_rate = @ExchangeRate,
+                                        modified_by = NULL,
+                                        modified_date = CURRENT_TIMESTAMP
+                                    WHERE erp_currency_exchange_rate_id = @Id AND company_id = @CompanyId",
+                                    pgConnection);
+
+                                updateCmd.Parameters.AddWithValue("@Id", record.RecId);
+                                updateCmd.Parameters.AddWithValue("@FromCurrency", fromCurrency);
+                                updateCmd.Parameters.AddWithValue("@ToCurrency", toCurrency);
+                                updateCmd.Parameters.AddWithValue("@ValidFrom", validFrom);
+                                updateCmd.Parameters.AddWithValue("@ExchangeRate", exchangeRate);
+                                updateCmd.Parameters.AddWithValue("@CompanyId", companyId);
+
+                                await updateCmd.ExecuteNonQueryAsync();
+                                _logger.LogDebug($"Updated record with RecId: {record.RecId} for company: {companyId}");
+                            }
+                            else
+                            {
+                                // Insert new record
+                                using var insertCmd = new NpgsqlCommand(
+                                    @"INSERT INTO erp_currency_exchange_rate (
+                                        erp_currency_exchange_rate_id,
+                                        from_currency,
+                                        to_currency,
+                                        valid_from,
+                                        exchange_rate,
+                                        company_id,
+                                        created_by,
+                                        created_date,
+                                        modified_by,
+                                        modified_date,
+                                        is_deleted,
+                                        deleted_by,
+                                        deleted_date
+                                    ) VALUES (
+                                        @Id,
+                                        @FromCurrency,
+                                        @ToCurrency,
+                                        @ValidFrom,
+                                        @ExchangeRate,
+                                        @CompanyId,
+                                        NULL,
+                                        CURRENT_TIMESTAMP,
+                                        NULL,
+                                        NULL,
+                                        false,
+                                        NULL,
+                                        NULL
+                                    )",
+                                    pgConnection);
+
+                                insertCmd.Parameters.AddWithValue("@Id", record.RecId);
+                                insertCmd.Parameters.AddWithValue("@FromCurrency", fromCurrency);
+                                insertCmd.Parameters.AddWithValue("@ToCurrency", toCurrency);
+                                insertCmd.Parameters.AddWithValue("@ValidFrom", validFrom);
+                                insertCmd.Parameters.AddWithValue("@ExchangeRate", exchangeRate);
+                                insertCmd.Parameters.AddWithValue("@CompanyId", companyId);
+
+                                await insertCmd.ExecuteNonQueryAsync();
+                                _logger.LogDebug($"Inserted new record with RecId: {record.RecId} for company: {companyId}");
+                            }
+
+                            migratedRecords++;
                         }
-
-                        var fromCurrency = GetStringValue(record.FromCurrency, 10);
-                        var toCurrency = GetStringValue(record.ToCurrency, 10);
-                        var validFrom = GetDateTimeValue(record.FromDate) ?? DateTime.UtcNow;
-                        var exchangeRate = record.ExchangeRate ?? 1.0m;
-
-                        if (existingRecordId.HasValue)
+                        catch (PostgresException pgEx)
                         {
-                            // Update existing record
-                            using var updateCmd = new NpgsqlCommand(
-                                @"UPDATE erp_currency_exchange_rate SET
-                                    from_currency = @FromCurrency,
-                                    to_currency = @ToCurrency,
-                                    valid_from = @ValidFrom,
-                                    exchange_rate = @ExchangeRate,
-                                    company_id = @CompanyId,
-                                    modified_by = NULL,
-                                    modified_date = CURRENT_TIMESTAMP
-                                WHERE erp_currency_exchange_rate_id = @Id",
-                                pgConnection);
-
-                            updateCmd.Parameters.AddWithValue("@Id", record.RecId);
-                            updateCmd.Parameters.AddWithValue("@FromCurrency", fromCurrency);
-                            updateCmd.Parameters.AddWithValue("@ToCurrency", toCurrency);
-                            updateCmd.Parameters.AddWithValue("@ValidFrom", validFrom);
-                            updateCmd.Parameters.AddWithValue("@ExchangeRate", exchangeRate);
-                            updateCmd.Parameters.AddWithValue("@CompanyId", defaultCompanyId);
-
-                            await updateCmd.ExecuteNonQueryAsync();
-                            _logger.LogDebug($"Updated record with RecId: {record.RecId}");
+                            var errorMsg = $"RecId {record.RecId}, Company {companyId}: {pgEx.Message}";
+                            _logger.LogWarning(errorMsg);
+                            errors.Add(errorMsg);
+                            skippedRecords++;
+                            continue;
                         }
-                        else
+                        catch (Exception ex)
                         {
-                            // Insert new record
-                            using var insertCmd = new NpgsqlCommand(
-                                @"INSERT INTO erp_currency_exchange_rate (
-                                    erp_currency_exchange_rate_id,
-                                    from_currency,
-                                    to_currency,
-                                    valid_from,
-                                    exchange_rate,
-                                    company_id,
-                                    created_by,
-                                    created_date,
-                                    modified_by,
-                                    modified_date,
-                                    is_deleted,
-                                    deleted_by,
-                                    deleted_date
-                                ) VALUES (
-                                    @Id,
-                                    @FromCurrency,
-                                    @ToCurrency,
-                                    @ValidFrom,
-                                    @ExchangeRate,
-                                    @CompanyId,
-                                    NULL,
-                                    CURRENT_TIMESTAMP,
-                                    NULL,
-                                    NULL,
-                                    false,
-                                    NULL,
-                                    NULL
-                                )",
-                                pgConnection);
-
-                            insertCmd.Parameters.AddWithValue("@Id", record.RecId);
-                            insertCmd.Parameters.AddWithValue("@FromCurrency", fromCurrency);
-                            insertCmd.Parameters.AddWithValue("@ToCurrency", toCurrency);
-                            insertCmd.Parameters.AddWithValue("@ValidFrom", validFrom);
-                            insertCmd.Parameters.AddWithValue("@ExchangeRate", exchangeRate);
-                            insertCmd.Parameters.AddWithValue("@CompanyId", defaultCompanyId);
-
-                            await insertCmd.ExecuteNonQueryAsync();
-                            _logger.LogDebug($"Inserted new record with RecId: {record.RecId}");
+                            var errorMsg = $"RecId {record.RecId}, Company {companyId}: {ex.Message}";
+                            _logger.LogError(errorMsg);
+                            errors.Add(errorMsg);
+                            skippedRecords++;
                         }
-
-                        migratedRecords++;
-                    }
-                    catch (Exception ex)
-                    {
-                        var errorMsg = $"RecId {record.RecId}: {ex.Message}";
-                        _logger.LogError(errorMsg);
-                        errors.Add(errorMsg);
-                        skippedRecords++;
                     }
                 }
 
