@@ -8,8 +8,8 @@ using Npgsql;
 public class POConditionMasterMigration : MigrationService
 {
     protected override string SelectQuery => "SELECT POConditionTypeId, POConditionTypeCode, POConditionTypeDesc, POType, StepNumber, ConditionCounter, ClientSAPId FROM TBL_POConditionTypeMaster";
-    protected override string InsertQuery => @"INSERT INTO po_condition_master (po_condition_id, po_condition_code, po_condition_name, po_doc_type_id, company_id, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) 
-                                             VALUES (@po_condition_id, @po_condition_code, @po_condition_name, @po_doc_type_id, @company_id, @created_by, @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date)";
+    protected override string InsertQuery => @"INSERT INTO po_condition_master (po_condition_id, po_condition_code, po_condition_name, po_type, po_doc_type_id, company_id, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) 
+                                             VALUES (@po_condition_id, @po_condition_code, @po_condition_name, @po_type, @po_doc_type_id, @company_id, @created_by, @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date)";
 
     public POConditionMasterMigration(IConfiguration configuration) : base(configuration) { }
 
@@ -20,7 +20,8 @@ public class POConditionMasterMigration : MigrationService
             "POConditionTypeId -> po_condition_id (Direct)",
             "POConditionTypeCode -> po_condition_code (Direct)",
             "POConditionTypeDesc -> po_condition_name (Direct)",
-            "POType -> po_doc_type_id (Foreign Key - requires lookup from po_doc_type_master)",
+            "POType -> po_type (Direct)",
+            "POType -> po_doc_type_id (Lookup from TBL_PO_DOC_TYPE via PODocTypeCode, default 0 if not found)",
             "ClientSAPId -> company_id (Direct)",
             "created_by -> 0 (Fixed)",
             "created_date -> NOW() (Generated)",
@@ -40,7 +41,8 @@ public class POConditionMasterMigration : MigrationService
             new { source = "POConditionTypeId", logic = "POConditionTypeId -> po_condition_id (Direct)", target = "po_condition_id" },
             new { source = "POConditionTypeCode", logic = "POConditionTypeCode -> po_condition_code (Direct)", target = "po_condition_code" },
             new { source = "POConditionTypeDesc", logic = "POConditionTypeDesc -> po_condition_name (Direct)", target = "po_condition_name" },
-            new { source = "POType", logic = "POType -> po_doc_type_id (Foreign Key Lookup)", target = "po_doc_type_id" },
+            new { source = "POType", logic = "POType -> po_type (Direct)", target = "po_type" },
+            new { source = "POType", logic = "POType -> po_doc_type_id (Lookup from TBL_PO_DOC_TYPE.PODocTypeId via PODocTypeCode match, default 0)", target = "po_doc_type_id" },
             new { source = "ClientSAPId", logic = "ClientSAPId -> company_id (Direct)", target = "company_id" },
             new { source = "-", logic = "created_by -> 0 (Fixed Default)", target = "created_by" },
             new { source = "-", logic = "created_date -> NOW() (Generated)", target = "created_date" },
@@ -59,6 +61,10 @@ public class POConditionMasterMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        // Load PODocType mapping from TBL_PO_DOC_TYPE
+        var poDocTypeMapping = await LoadPoDocTypeMappingAsync(sqlConn);
+        Console.WriteLine($"Loaded {poDocTypeMapping.Count} PODocType mappings from TBL_PO_DOC_TYPE");
+
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await sqlCmd.ExecuteReaderAsync();
 
@@ -105,11 +111,19 @@ public class POConditionMasterMigration : MigrationService
                     }
 
 
+                    // Lookup po_doc_type_id from mapping, default to 0 if not found
+                    int poDocTypeId = 0;
+                    if (!string.IsNullOrWhiteSpace(poType) && poDocTypeMapping.ContainsKey(poType.Trim()))
+                    {
+                        poDocTypeId = poDocTypeMapping[poType.Trim()];
+                    }
+
                     pgCmd.Parameters.Clear();
                     pgCmd.Parameters.AddWithValue("@po_condition_id", poConditionTypeId);
                     pgCmd.Parameters.AddWithValue("@po_condition_code", poConditionTypeCode ?? "");
                     pgCmd.Parameters.AddWithValue("@po_condition_name", poConditionTypeDesc ?? "");
-                    pgCmd.Parameters.AddWithValue("@po_doc_type_id", poType ?? "");
+                    pgCmd.Parameters.AddWithValue("@po_type", poType ?? "");
+                    pgCmd.Parameters.AddWithValue("@po_doc_type_id", poDocTypeId);
                     pgCmd.Parameters.AddWithValue("@company_id", clientSAPId);
                     pgCmd.Parameters.AddWithValue("@created_by", 0); // Default: 0
                     pgCmd.Parameters.AddWithValue("@created_date", DateTime.UtcNow); // Default: Now
@@ -150,5 +164,30 @@ public class POConditionMasterMigration : MigrationService
         }
         
         return insertedCount;
+    }
+
+    private async Task<Dictionary<string, int>> LoadPoDocTypeMappingAsync(SqlConnection sqlConn)
+    {
+        var mapping = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var query = "SELECT PODocTypeId, PODocTypeCode FROM TBL_PO_DOC_TYPE WHERE PODocTypeCode IS NOT NULL";
+            using var cmd = new SqlCommand(query, sqlConn);
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                int poDocTypeId = reader.GetInt32(0);
+                string poDocTypeCode = reader.GetString(1).Trim();
+                if (!mapping.ContainsKey(poDocTypeCode))
+                {
+                    mapping[poDocTypeCode] = poDocTypeId;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Warning: Error loading PODocType mapping: {ex.Message}");
+        }
+        return mapping;
     }
 }
