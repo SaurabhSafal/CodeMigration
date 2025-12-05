@@ -309,7 +309,7 @@ INSERT INTO erp_pr_lines (
                 ["created_date"] = reader["created_date"] ?? DBNull.Value,
                 ["modified_by"] = reader["modified_by"] ?? DBNull.Value,
                 ["modified_date"] = reader["modified_date"] ?? DBNull.Value,
-                ["is_deleted"] = Convert.ToInt32(reader["item_block"]) == 1,
+                ["is_deleted"] = Convert.ToInt32(reader["is_deleted"]) == 1,
                 ["deleted_by"] = reader["deleted_by"] ?? DBNull.Value,
                 ["deleted_date"] = reader["deleted_date"] ?? DBNull.Value
             };

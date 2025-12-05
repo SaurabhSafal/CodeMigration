@@ -25,9 +25,14 @@ public class EventScheduleHistoryMigrationService
             new { source = "EVENTID", target = "event_id", type = "int -> integer" },
             new { source = "TIMEZONE", target = "time_zone", type = "nvarchar -> character varying" },
             new { source = "TIMEZONECOUNTRY", target = "time_country", type = "nvarchar -> character varying" },
-            new { source = "OPENDATETIME", target = "event_start_date_time", type = "datetime -> timestamp with time zone" },
-            new { source = "CLOSEDATETIME", target = "event_end_date_time", type = "datetime -> timestamp with time zone" },
-            new { source = "REASONID", target = "event_schedule_change_remark", type = "int -> character varying (converted via join on TBL_REASONMASTER)" },
+            new { source = "OPENDATETIME / AUCTION_START_DATE_TIME", target = "event_start_date_time", type = "datetime -> timestamp (Conditional: IF EVENTTYPE=1 THEN OPENDATETIME ELSE AUCTION_START_DATE_TIME)" },
+            new { source = "CLOSEDATETIME / AUCTION_END_DATE_TIME", target = "event_end_date_time", type = "datetime -> timestamp (Conditional: IF EVENTTYPE=1 THEN CLOSEDATETIME ELSE AUCTION_END_DATE_TIME)" },
+            new { source = "TBL_REASONMASTER.Reason", target = "event_schedule_change_remark", type = "nvarchar -> character varying (Lookup via REASONID)" },
+            new { source = "OPENDATETIME", target = "event_start_date_time", type = "datetime -> used if EVENTTYPE=1" },
+            new { source = "CLOSEDATETIME", target = "event_end_date_time", type = "datetime -> used if EVENTTYPE=1" },
+            new { source = "AUCTION_START_DATE_TIME", target = "event_start_date_time", type = "datetime -> used if EVENTTYPE!=1" },
+            new { source = "AUCTION_END_DATE_TIME", target = "event_end_date_time", type = "datetime -> used if EVENTTYPE!=1" },
+            new { source = "REASONID", target = "event_schedule_change_remark", type = "int -> lookup to TBL_REASONMASTER.Reason" },
             new { source = "N/A", target = "operation_type", type = "character varying (default: 'INSERT')" },
             new { source = "default: 'INSERT'", target = "operation_type", type = "character varying (for audit trail)" }
         };
@@ -57,19 +62,25 @@ public class EventScheduleHistoryMigrationService
         
         _logger.LogInformation($"Found {validEventIds.Count} valid event IDs in event_master table.");
 
-        // Query with join to get reason text from REASONID
+        // Query with join to get reason text from REASONID and conditional date logic based on EVENTTYPE
         var selectQuery = @"
             SELECT 
-                e.EVENTSCHEDULARID,
-                e.EVENTID,
-                e.TIMEZONE,
-                e.TIMEZONECOUNTRY,
-                e.OPENDATETIME,
-                e.CLOSEDATETIME,
-                ISNULL(r.Reason, 'Historical Record') AS ReasonRemark
-            FROM TBL_EVENTSCHEDULAR e
-            LEFT JOIN TBL_REASONMASTER r ON e.REASONID = r.ReasonID
-            ORDER BY e.EVENTSCHEDULARID";
+                es.EVENTSCHEDULARID,
+                es.EVENTID,
+                es.TIMEZONE,
+                es.TIMEZONECOUNTRY,
+                es.OPENDATETIME,
+                es.CLOSEDATETIME,
+                es.AUCTION_START_DATE_TIME,
+                es.AUCTION_END_DATE_TIME,
+                em.EVENTTYPE,
+                rm.Reason,
+                CASE WHEN em.EVENTTYPE = 1 THEN es.OPENDATETIME ELSE es.AUCTION_START_DATE_TIME END AS StartDate,
+                CASE WHEN em.EVENTTYPE = 1 THEN es.CLOSEDATETIME ELSE es.AUCTION_END_DATE_TIME END AS EndDate
+            FROM TBL_EVENTSCHEDULAR es
+            INNER JOIN TBL_EVENTMASTER em ON em.EVENTID = es.EVENTID
+            LEFT JOIN TBL_REASONMASTER rm ON rm.ReasonID = es.REASONID
+            ORDER BY es.EVENTSCHEDULARID";
         
         using var sqlCmd = new SqlCommand(selectQuery, sqlConnection);
         using var reader = await sqlCmd.ExecuteReaderAsync();
@@ -102,9 +113,9 @@ public class EventScheduleHistoryMigrationService
                 FormatInteger(reader["EVENTID"]),                  // event_id (integer, NOT NULL)
                 FormatText(reader["TIMEZONE"]),                    // time_zone (character varying, NOT NULL)
                 FormatText(reader["TIMEZONECOUNTRY"]),             // time_country (character varying, NOT NULL)
-                FormatTimestamp(reader["OPENDATETIME"]),           // event_start_date_time (timestamp, NOT NULL)
-                FormatTimestamp(reader["CLOSEDATETIME"]),          // event_end_date_time (timestamp, NOT NULL)
-                FormatText(reader["ReasonRemark"]),                // event_schedule_change_remark (character varying, NOT NULL)
+                FormatTimestamp(reader["StartDate"]),              // event_start_date_time (conditional: EVENTTYPE=1 ? OPENDATETIME : AUCTION_START_DATE_TIME)
+                FormatTimestamp(reader["EndDate"]),                // event_end_date_time (conditional: EVENTTYPE=1 ? CLOSEDATETIME : AUCTION_END_DATE_TIME)
+                FormatText(reader["Reason"]),                      // event_schedule_change_remark (from TBL_REASONMASTER via REASONID)
                 "INSERT"                                          // operation_type (character varying)
             };
             var row = string.Join("|", fields);

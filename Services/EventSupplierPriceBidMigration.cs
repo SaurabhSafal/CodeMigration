@@ -298,6 +298,255 @@ namespace DataMigration.Services
             }
         }
 
+        public async Task<int> MigrateAndUpdateAsync()
+        {
+            // First run the initial migration
+            var initialCount = await MigrateAsync();
+            
+            // Then run the update logic from auction table
+            var updateCount = await UpdateFromAucSupplierAsync();
+            
+            _logger.LogInformation($"Total migration completed. Initial: {initialCount}, Updates: {updateCount}");
+            
+            return initialCount + updateCount;
+        }
+
+        public async Task<int> UpdateFromAucSupplierAsync()
+        {
+            var sqlConnectionString = _configuration.GetConnectionString("SqlServer");
+            var pgConnectionString = _configuration.GetConnectionString("PostgreSql");
+
+            if (string.IsNullOrEmpty(sqlConnectionString) || string.IsNullOrEmpty(pgConnectionString))
+            {
+                throw new InvalidOperationException("Database connection strings are not configured properly.");
+            }
+
+            var upsertedRecords = 0;
+            var skippedRecords = 0;
+
+            try
+            {
+                using var sqlConnection = new SqlConnection(sqlConnectionString);
+                using var pgConnection = new NpgsqlConnection(pgConnectionString);
+
+                await sqlConnection.OpenAsync();
+                await pgConnection.OpenAsync();
+
+                _logger.LogInformation("Starting EventSupplierPriceBid UPSERT from TBL_AUC_SUPPLIER (ordered by UPDATEID)...");
+
+                // Build lookup for valid event_ids
+                var validEventIds = new HashSet<int>();
+                using (var cmd = new NpgsqlCommand("SELECT event_id FROM event_master", pgConnection))
+                using (var reader = await cmd.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        validEventIds.Add(reader.GetInt32(0));
+                    }
+                }
+                _logger.LogInformation($"Built event_id lookup with {validEventIds.Count} entries");
+
+                // Build lookup for valid supplier_ids
+                var validSupplierIds = new HashSet<int>();
+                using (var cmd = new NpgsqlCommand("SELECT supplier_id FROM supplier_master", pgConnection))
+                using (var reader = await cmd.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        validSupplierIds.Add(reader.GetInt32(0));
+                    }
+                }
+                _logger.LogInformation($"Built supplier_id lookup with {validSupplierIds.Count} entries");
+
+                // Get validity dates from TBL_PB_SUPPLIER_ATTACHMENT
+                var validityDatesMap = new Dictionary<(int supplierId, int eventId), DateTime?>();
+                using (var cmd = new SqlCommand(@"
+                    SELECT SUPPLIERID, EVENTID, QUOTATIONVALIDITYDATE
+                    FROM TBL_PB_SUPPLIER_ATTACHMENT", sqlConnection))
+                using (var reader = await cmd.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        try
+                        {
+                            var supplierId = reader.IsDBNull(0) ? 0 : Convert.ToInt32(reader.GetDecimal(0));
+                            var eventId = reader.IsDBNull(1) ? 0 : Convert.ToInt32(reader.GetDecimal(1));
+                            var validityDate = reader.IsDBNull(2) ? null : (DateTime?)reader.GetDateTime(2);
+                            
+                            if (supplierId > 0 && eventId > 0)
+                            {
+                                validityDatesMap[(supplierId, eventId)] = validityDate;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning($"Error reading validity date: {ex.Message}");
+                        }
+                    }
+                }
+                _logger.LogInformation($"Found {validityDatesMap.Count} validity date mappings");
+
+                // Fetch aggregated data from TBL_AUC_SUPPLIER ordered by UPDATEID
+                // Group by SUPPLIER_ID and EVENTID to get aggregated values
+                var sourceData = new List<AucSupplierRow>();
+                
+                using (var cmd = new SqlCommand(@"
+                    SELECT 
+                        VendorId AS SUPPLIER_ID,
+                        EVENTID,
+                        SUM((UNIT_PRICE - (UNIT_PRICE * ISNULL(DiscountPer, 0) / 100)) * ISNULL(QTY, 0)) AS ItemTotal,
+                        MAX(ISNULL(TotalGSTAmount, 0)) AS TotalGSTAmount,
+                        MAX(ISNULL(SubTotal, 0)) AS SubTotal,
+                        MAX(ISNULL(UPDATEID, 0)) AS MaxUpdateId
+                    FROM TBL_AUC_SUPPLIER
+                    WHERE VendorId IS NOT NULL 
+                      AND EVENTID IS NOT NULL
+                    GROUP BY VendorId, EVENTID
+                    ORDER BY MAX(ISNULL(UPDATEID, 0))", sqlConnection))
+                {
+                    cmd.CommandTimeout = 600;
+                    using var reader = await cmd.ExecuteReaderAsync();
+                    
+                    while (await reader.ReadAsync())
+                    {
+                        sourceData.Add(new AucSupplierRow
+                        {
+                            SUPPLIER_ID = reader.IsDBNull(0) ? null : reader.GetInt32(0),
+                            EVENTID = reader.IsDBNull(1) ? null : reader.GetInt32(1),
+                            ItemTotal = reader.IsDBNull(2) ? 0m : reader.GetDecimal(2),
+                            TotalGSTAmount = reader.IsDBNull(3) ? 0m : reader.GetDecimal(3),
+                            SubTotal = reader.IsDBNull(4) ? 0m : reader.GetDecimal(4),
+                            MaxUpdateId = reader.IsDBNull(5) ? 0 : reader.GetInt32(5)
+                        });
+                    }
+                }
+
+                _logger.LogInformation($"Fetched {sourceData.Count} aggregated records from TBL_AUC_SUPPLIER (ordered by UPDATEID)");
+
+                // Process each record in order (UPDATEID ensures correct sequence)
+                foreach (var record in sourceData)
+                {
+                    try
+                    {
+                        // Validate required fields
+                        if (!record.SUPPLIER_ID.HasValue || !record.EVENTID.HasValue)
+                        {
+                            _logger.LogWarning($"Skipping UPDATEID {record.MaxUpdateId}: SUPPLIER_ID or EVENTID is null");
+                            skippedRecords++;
+                            continue;
+                        }
+
+                        // Validate event_id
+                        if (!validEventIds.Contains(record.EVENTID.Value))
+                        {
+                            _logger.LogWarning($"Skipping UPDATEID {record.MaxUpdateId}: event_id={record.EVENTID} not found in event_master");
+                            skippedRecords++;
+                            continue;
+                        }
+
+                        // Validate supplier_id
+                        if (!validSupplierIds.Contains(record.SUPPLIER_ID.Value))
+                        {
+                            _logger.LogWarning($"Skipping UPDATEID {record.MaxUpdateId}: supplier_id={record.SUPPLIER_ID} not found in supplier_master");
+                            skippedRecords++;
+                            continue;
+                        }
+
+                        // Calculate totals (same logic as initial migration)
+                        var itemTotal = record.ItemTotal;
+                        var lotTotal = record.SubTotal;
+                        var totalTaxAmount = record.TotalGSTAmount;
+                        var totalBeforeTax = itemTotal + lotTotal;
+                        var totalAfterTax = totalBeforeTax + totalTaxAmount;
+
+                        // Get validity date
+                        DateTime? validityDays = null;
+                        var key = (record.SUPPLIER_ID.Value, record.EVENTID.Value);
+                        if (validityDatesMap.TryGetValue(key, out var validityDate))
+                        {
+                            validityDays = validityDate;
+                        }
+
+                        // UPSERT: Insert or Update based on event_id + supplier_id
+                        using var upsertCmd = new NpgsqlCommand(@"
+                            INSERT INTO event_supplier_price_bid (
+                                supplier_id,
+                                event_id,
+                                item_total,
+                                total_tax_amount,
+                                total_after_tax,
+                                lot_total,
+                                total_before_tax,
+                                validity_days,
+                                created_by,
+                                created_date,
+                                modified_by,
+                                modified_date,
+                                is_deleted,
+                                deleted_by,
+                                deleted_date
+                            ) VALUES (
+                                @supplier_id,
+                                @event_id,
+                                @item_total,
+                                @total_tax_amount,
+                                @total_after_tax,
+                                @lot_total,
+                                @total_before_tax,
+                                @validity_days,
+                                NULL,
+                                CURRENT_TIMESTAMP,
+                                NULL,
+                                NULL,
+                                false,
+                                NULL,
+                                NULL
+                            )
+                            ON CONFLICT (event_id, supplier_id) DO UPDATE SET
+                                item_total = EXCLUDED.item_total,
+                                total_tax_amount = EXCLUDED.total_tax_amount,
+                                total_after_tax = EXCLUDED.total_after_tax,
+                                lot_total = EXCLUDED.lot_total,
+                                total_before_tax = EXCLUDED.total_before_tax,
+                                validity_days = EXCLUDED.validity_days,
+                                modified_by = NULL,
+                                modified_date = CURRENT_TIMESTAMP", pgConnection);
+
+                        upsertCmd.Parameters.AddWithValue("@supplier_id", record.SUPPLIER_ID.Value);
+                        upsertCmd.Parameters.AddWithValue("@event_id", record.EVENTID.Value);
+                        upsertCmd.Parameters.AddWithValue("@item_total", itemTotal);
+                        upsertCmd.Parameters.AddWithValue("@total_tax_amount", totalTaxAmount);
+                        upsertCmd.Parameters.AddWithValue("@total_after_tax", totalAfterTax);
+                        upsertCmd.Parameters.AddWithValue("@lot_total", lotTotal);
+                        upsertCmd.Parameters.AddWithValue("@total_before_tax", totalBeforeTax);
+                        upsertCmd.Parameters.AddWithValue("@validity_days", (object?)validityDays ?? DBNull.Value);
+
+                        await upsertCmd.ExecuteNonQueryAsync();
+                        upsertedRecords++;
+
+                        if (upsertedRecords % 100 == 0)
+                        {
+                            _logger.LogInformation($"Processed {upsertedRecords} UPSERT operations...");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError($"UPDATEID {record.MaxUpdateId} (Supplier: {record.SUPPLIER_ID}, Event: {record.EVENTID}): {ex.Message}");
+                        skippedRecords++;
+                    }
+                }
+
+                _logger.LogInformation($"UPSERT completed. Upserted: {upsertedRecords}, Skipped: {skippedRecords}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "UPSERT migration failed");
+                throw;
+            }
+
+            return upsertedRecords;
+        }
+
         private class SourceRow
         {
             public int? SUPPLIER_ID { get; set; }
@@ -317,6 +566,16 @@ namespace DataMigration.Services
             public decimal LotTotal { get; set; }
             public decimal TotalBeforeTax { get; set; }
             public DateTime? ValidityDays { get; set; }
+        }
+
+        private class AucSupplierRow
+        {
+            public int? SUPPLIER_ID { get; set; }
+            public int? EVENTID { get; set; }
+            public decimal ItemTotal { get; set; }
+            public decimal TotalGSTAmount { get; set; }
+            public decimal SubTotal { get; set; }
+            public int MaxUpdateId { get; set; }
         }
     }
 }

@@ -82,7 +82,7 @@ namespace DataMigration.Services
                         QCSPOMailAttachmentFileId,
                         AWARDEVENTMAINID,
                         AttachmentFile,
-                        TBL_QCSPOMailAttachmentFile
+                        UPLOADPATH
                     FROM TBL_QCSPOMailAttachmentFile
                     WHERE QCSPOMailAttachmentFileId IS NOT NULL
                     ORDER BY QCSPOMailAttachmentFileId", sqlConnection))

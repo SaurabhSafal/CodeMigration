@@ -174,7 +174,7 @@ namespace DataMigration.Services
                             EventId = record.EVENTID.Value,
                             SupplierId = record.SUPPLIERID.Value,
                             FileName = record.ATTACHMENTNAME,
-                            FilePath = "", // Default empty string for NOT NULL
+                            FilePath = "/Documents/PriceBidDocuments/" + record.ATTACHMENTNAME,
                             CreatedBy = null,
                             CreatedDate = record.ENTDATE,
                             ModifiedBy = null,

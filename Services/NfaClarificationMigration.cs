@@ -24,7 +24,9 @@ namespace DataMigration.Services
                 new { source = "ClarificationRemarks", target = "clarification_remarks", type = "nvarchar -> text (NOT NULL)" },
                 new { source = "IsSeen", target = "is_seen", type = "int -> boolean (NOT NULL)" },
                 new { source = "ToUserID", target = "to_user_id", type = "int -> ARRAY (NOT NULL)" },
-                new { source = "MassageSentToAllUser", target = "message_sent_to_all_user", type = "int -> boolean (NOT NULL)" }
+                new { source = "MassageSentToAllUser", target = "message_sent_to_all_user", type = "int -> boolean (NOT NULL)" },
+                new { source = "ACTIONBY", target = "created_by", type = "int -> integer" },
+                new { source = "ACTIONDATE", target = "created_date", type = "datetime -> timestamp with time zone" }
             };
         }
 
@@ -174,6 +176,7 @@ namespace DataMigration.Services
                             IsSeen = isSeen,
                             ToUserId = toUserIdArray.ToArray(),
                             MessageSentToAllUser = messageSentToAllUser,
+                            CreatedBy = record.ActionBy,
                             CreatedDate = record.ActionDate
                         };
 
@@ -228,7 +231,7 @@ namespace DataMigration.Services
             for (int i = 0; i < batch.Count; i++)
             {
                 var row = batch[i];
-                values.Add($"(@NFAClarificationId{i}, @NFAHeaderId{i}, @ClarificationRemarks{i}, @IsSeen{i}, @ToUserId{i}, @MessageSentToAllUser{i}, NULL, @CreatedDate{i}, NULL, NULL, false, NULL, NULL)");
+                values.Add($"(@NFAClarificationId{i}, @NFAHeaderId{i}, @ClarificationRemarks{i}, @IsSeen{i}, @ToUserId{i}, @MessageSentToAllUser{i}, @CreatedBy{i}, @CreatedDate{i}, NULL, NULL, false, NULL, NULL)");
                 
                 cmd.Parameters.AddWithValue($"@NFAClarificationId{i}", row.NFAClarificationId);
                 cmd.Parameters.AddWithValue($"@NFAHeaderId{i}", row.NFAHeaderId);
@@ -236,6 +239,7 @@ namespace DataMigration.Services
                 cmd.Parameters.AddWithValue($"@IsSeen{i}", row.IsSeen);
                 cmd.Parameters.AddWithValue($"@ToUserId{i}", row.ToUserId);
                 cmd.Parameters.AddWithValue($"@MessageSentToAllUser{i}", row.MessageSentToAllUser);
+                cmd.Parameters.AddWithValue($"@CreatedBy{i}", row.CreatedBy.HasValue ? (object)row.CreatedBy.Value : DBNull.Value);
                 cmd.Parameters.AddWithValue($"@CreatedDate{i}", row.CreatedDate.HasValue ? (object)row.CreatedDate.Value : DBNull.Value);
             }
 
@@ -275,6 +279,7 @@ namespace DataMigration.Services
             public bool IsSeen { get; set; }
             public int[] ToUserId { get; set; } = Array.Empty<int>();
             public bool MessageSentToAllUser { get; set; }
+            public int? CreatedBy { get; set; }
             public DateTime? CreatedDate { get; set; }
         }
     }

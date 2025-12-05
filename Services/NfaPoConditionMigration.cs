@@ -248,6 +248,64 @@ namespace DataMigration.Services
             }
         }
 
+        public async Task<int> UpdateNfaLineWithAggregatedPoConditionsAsync()
+        {
+            var pgConnectionString = _configuration.GetConnectionString("PostgreSql");
+
+            if (string.IsNullOrEmpty(pgConnectionString))
+            {
+                throw new InvalidOperationException("PostgreSQL connection string is not configured properly.");
+            }
+
+            var updatedRecords = 0;
+
+            try
+            {
+                using var pgConnection = new NpgsqlConnection(pgConnectionString);
+                await pgConnection.OpenAsync();
+
+                _logger.LogInformation("Starting post-migration: Updating nfa_line with aggregated po_condition_id values...");
+
+                // Update nfa_line with comma-separated nfa_po_condition_id values
+                using var cmd = new NpgsqlCommand(@"
+                    UPDATE nfa_line nl
+                    SET po_condition_id = agg.ids
+                    FROM (
+                        SELECT 
+                            nfa_line_id,
+                            string_agg(nfa_po_condition_id::text, ',' ORDER BY nfa_po_condition_id) AS ids
+                        FROM nfa_po_condition
+                        WHERE nfa_line_id IS NOT NULL
+                        GROUP BY nfa_line_id
+                    ) AS agg
+                    WHERE nl.nfa_line_id = agg.nfa_line_id", pgConnection);
+
+                updatedRecords = await cmd.ExecuteNonQueryAsync();
+                
+                _logger.LogInformation($"Post-migration completed. Updated {updatedRecords} nfa_line records with aggregated po_condition_id values");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Post-migration update failed");
+                throw;
+            }
+
+            return updatedRecords;
+        }
+
+        public async Task<(int MigratedRecords, int UpdatedRecords)> MigrateAndUpdateAsync()
+        {
+            // First run the migration
+            var migratedRecords = await MigrateAsync();
+            
+            // Then update nfa_line with aggregated values
+            var updatedRecords = await UpdateNfaLineWithAggregatedPoConditionsAsync();
+            
+            _logger.LogInformation($"Complete migration process finished. Migrated: {migratedRecords}, Updated nfa_line: {updatedRecords}");
+            
+            return (migratedRecords, updatedRecords);
+        }
+
         private class SourceRow
         {
             public int AwardEventPoConditionId { get; set; }

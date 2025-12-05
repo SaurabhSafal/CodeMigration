@@ -244,7 +244,7 @@ public class SupplierTermsMigration : MigrationService
                     ["term_accept"] = termAccept,
                     ["term_deviate"] = termDeviate,
                     ["created_by"] = DBNull.Value,
-                    ["created_date"] = DBNull.Value,
+                    ["created_date"] = entDate ?? DBNull.Value,
                     ["modified_by"] = DBNull.Value,
                     ["modified_date"] = DBNull.Value,
                     ["is_deleted"] = false,

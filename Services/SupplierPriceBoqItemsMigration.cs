@@ -362,6 +362,294 @@ namespace DataMigration.Services
             }
         }
 
+        public async Task<int> MigrateAndUpdateAsync()
+        {
+            // First run the initial migration
+            var initialCount = await MigrateAsync();
+            
+            // Then run the update logic
+            var updateCount = await UpdateFromAucSupplierSubAsync();
+            
+            _logger.LogInformation($"Total migration completed. Initial: {initialCount}, Updates: {updateCount}");
+            
+            return initialCount + updateCount;
+        }
+
+        public async Task<int> UpdateFromAucSupplierSubAsync()
+        {
+            var sqlConnectionString = _configuration.GetConnectionString("SqlServer");
+            var pgConnectionString = _configuration.GetConnectionString("PostgreSql");
+
+            if (string.IsNullOrEmpty(sqlConnectionString) || string.IsNullOrEmpty(pgConnectionString))
+            {
+                throw new InvalidOperationException("Database connection strings are not configured properly.");
+            }
+
+            var upsertedRecords = 0;
+            var skippedRecords = 0;
+
+            try
+            {
+                using var sqlConnection = new SqlConnection(sqlConnectionString);
+                using var pgConnection = new NpgsqlConnection(pgConnectionString);
+
+                await sqlConnection.OpenAsync();
+                await pgConnection.OpenAsync();
+
+                _logger.LogInformation("Starting SupplierPriceBoqItems UPSERT from TBL_AUC_SUPPLIER_SUB (ordered by UPDATEID)...");
+
+                // Build lookup for valid event_ids
+                var validEventIds = new HashSet<int>();
+                using (var cmd = new NpgsqlCommand(@"
+                    SELECT event_id 
+                    FROM event_master 
+                    WHERE event_id IS NOT NULL", pgConnection))
+                using (var reader = await cmd.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        validEventIds.Add(reader.GetInt32(0));
+                    }
+                }
+                _logger.LogInformation($"Built event_id lookup with {validEventIds.Count} entries");
+
+                // Build lookup for valid supplier_ids
+                var validSupplierIds = new HashSet<int>();
+                using (var cmd = new NpgsqlCommand(@"
+                    SELECT supplier_id 
+                    FROM supplier_master 
+                    WHERE supplier_id IS NOT NULL", pgConnection))
+                using (var reader = await cmd.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        validSupplierIds.Add(reader.GetInt32(0));
+                    }
+                }
+                _logger.LogInformation($"Built supplier_id lookup with {validSupplierIds.Count} entries");
+
+                // Build lookup for valid event_boq_items_ids
+                var validEventBoqItemsIds = new HashSet<int>();
+                using (var cmd = new NpgsqlCommand(@"
+                    SELECT event_boq_items_id 
+                    FROM event_boq_items 
+                    WHERE event_boq_items_id IS NOT NULL", pgConnection))
+                using (var reader = await cmd.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        validEventBoqItemsIds.Add(reader.GetInt32(0));
+                    }
+                }
+                _logger.LogInformation($"Built event_boq_items_id lookup with {validEventBoqItemsIds.Count} entries");
+
+                // Build lookup for valid event_supplier_line_item_ids
+                var validEventSupplierLineItemIds = new HashSet<int>();
+                using (var cmd = new NpgsqlCommand(@"
+                    SELECT event_supplier_line_item_id 
+                    FROM event_supplier_line_item 
+                    WHERE event_supplier_line_item_id IS NOT NULL", pgConnection))
+                using (var reader = await cmd.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        validEventSupplierLineItemIds.Add(reader.GetInt32(0));
+                    }
+                }
+                _logger.LogInformation($"Built event_supplier_line_item_id lookup with {validEventSupplierLineItemIds.Count} entries");
+
+                // Build lookup for event_supplier_price_bid_id
+                var eventSupplierPriceBidLookup = new Dictionary<string, int>();
+                using (var cmd = new NpgsqlCommand(@"
+                    SELECT event_supplier_price_bid_id, event_id, supplier_id 
+                    FROM event_supplier_price_bid 
+                    WHERE event_id IS NOT NULL AND supplier_id IS NOT NULL", pgConnection))
+                using (var reader = await cmd.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        var id = reader.GetInt32(0);
+                        var eventId = reader.GetInt32(1);
+                        var supplierId = reader.GetInt32(2);
+                        var key = $"{eventId}_{supplierId}";
+                        if (!eventSupplierPriceBidLookup.ContainsKey(key))
+                        {
+                            eventSupplierPriceBidLookup[key] = id;
+                        }
+                    }
+                }
+                _logger.LogInformation($"Built event_supplier_price_bid_id lookup with {eventSupplierPriceBidLookup.Count} entries");
+
+                // Fetch source data from TBL_AUC_SUPPLIER_SUB ordered by UPDATEID
+                var sourceData = new List<AucSupplierSubRow>();
+                
+                using (var cmd = new SqlCommand(@"
+                    SELECT 
+                        TBL_AUC_SUPPLIER_SUB.PBSubId as event_boq_items_id,
+                        TBL_PB_BUYER.EVENTID,
+                        TBL_AUC_SUPPLIER.PBID as event_supplier_line_item_id,
+                        TBL_AUC_SUPPLIER_SUB.PB_SupplierId as SUPPLIERID,
+                        TBL_AUC_SUPPLIER_SUB.Rate,
+                        TBL_AUC_SUPPLIER_SUB.UPDATEID
+                    FROM TBL_AUC_SUPPLIER_SUB
+                    INNER JOIN TBL_PB_BUYER_SUB ON TBL_PB_BUYER_SUB.PBSubId = TBL_AUC_SUPPLIER_SUB.PBSubId
+                    INNER JOIN TBL_PB_BUYER ON TBL_PB_BUYER.PBID = TBL_PB_BUYER_SUB.PBID
+                    INNER JOIN TBL_AUC_SUPPLIER ON TBL_AUC_SUPPLIER.EVENTID = TBL_PB_BUYER.EVENTID 
+                        AND TBL_AUC_SUPPLIER.PRTRANSID = TBL_PB_BUYER.PRTRANSID 
+                        AND TBL_AUC_SUPPLIER.SUPPLIER_ID = TBL_AUC_SUPPLIER_SUB.PB_SupplierId
+                    WHERE TBL_AUC_SUPPLIER_SUB.PBSubId IS NOT NULL
+                    ORDER BY TBL_AUC_SUPPLIER_SUB.UPDATEID", sqlConnection))
+                {
+                    cmd.CommandTimeout = 600;
+                    using var reader = await cmd.ExecuteReaderAsync();
+                    
+                    while (await reader.ReadAsync())
+                    {
+                        decimal? rate = null;
+                        if (!reader.IsDBNull(4))
+                        {
+                            var rateValue = reader.GetValue(4);
+                            if (decimal.TryParse(rateValue.ToString(), out decimal parsedRate))
+                            {
+                                rate = parsedRate;
+                            }
+                        }
+
+                        sourceData.Add(new AucSupplierSubRow
+                        {
+                            EventBoqItemsId = reader.IsDBNull(0) ? null : reader.GetInt32(0),
+                            EventId = reader.IsDBNull(1) ? null : reader.GetInt32(1),
+                            EventSupplierLineItemId = reader.IsDBNull(2) ? null : reader.GetInt32(2),
+                            SupplierId = reader.IsDBNull(3) ? null : reader.GetInt32(3),
+                            Rate = rate,
+                            UPDATEID = reader.IsDBNull(5) ? 0 : reader.GetInt32(5)
+                        });
+                    }
+                }
+
+                _logger.LogInformation($"Fetched {sourceData.Count} records from TBL_AUC_SUPPLIER_SUB (ordered by UPDATEID)");
+
+                // Process each record in order
+                foreach (var record in sourceData)
+                {
+                    try
+                    {
+                        // Validate required fields
+                        if (!record.EventId.HasValue || !record.SupplierId.HasValue || !record.EventBoqItemsId.HasValue ||
+                            !record.EventSupplierLineItemId.HasValue || !record.Rate.HasValue)
+                        {
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: Missing required fields");
+                            skippedRecords++;
+                            continue;
+                        }
+
+                        // Validate foreign keys
+                        if (!validEventIds.Contains(record.EventId.Value))
+                        {
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: event_id={record.EventId} not found");
+                            skippedRecords++;
+                            continue;
+                        }
+
+                        if (!validSupplierIds.Contains(record.SupplierId.Value))
+                        {
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: supplier_id={record.SupplierId} not found");
+                            skippedRecords++;
+                            continue;
+                        }
+
+                        if (!validEventBoqItemsIds.Contains(record.EventBoqItemsId.Value))
+                        {
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: event_boq_items_id={record.EventBoqItemsId} not found");
+                            skippedRecords++;
+                            continue;
+                        }
+
+                        if (!validEventSupplierLineItemIds.Contains(record.EventSupplierLineItemId.Value))
+                        {
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: event_supplier_line_item_id={record.EventSupplierLineItemId} not found");
+                            skippedRecords++;
+                            continue;
+                        }
+
+                        // Lookup event_supplier_price_bid_id
+                        var lookupKey = $"{record.EventId.Value}_{record.SupplierId.Value}";
+                        if (!eventSupplierPriceBidLookup.TryGetValue(lookupKey, out var eventSupplierPriceBidId))
+                        {
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: event_supplier_price_bid_id not found");
+                            skippedRecords++;
+                            continue;
+                        }
+
+                        // UPSERT based on unique key: (event_boq_items_id, event_supplier_line_item_id, supplier_id)
+                        using var upsertCmd = new NpgsqlCommand(@"
+                            INSERT INTO supplier_price_boq_items (
+                                event_boq_items_id,
+                                event_id,
+                                event_supplier_price_bid_id,
+                                supplier_id,
+                                boq_item_unit_price,
+                                event_supplier_line_item_id,
+                                created_by,
+                                created_date,
+                                modified_by,
+                                modified_date,
+                                is_deleted,
+                                deleted_by,
+                                deleted_date
+                            ) VALUES (
+                                @event_boq_items_id,
+                                @event_id,
+                                @event_supplier_price_bid_id,
+                                @supplier_id,
+                                @boq_item_unit_price,
+                                @event_supplier_line_item_id,
+                                NULL,
+                                CURRENT_TIMESTAMP,
+                                NULL,
+                                CURRENT_TIMESTAMP,
+                                false,
+                                NULL,
+                                NULL
+                            )
+                            ON CONFLICT (event_boq_items_id, event_supplier_line_item_id, supplier_id) DO UPDATE SET
+                                boq_item_unit_price = EXCLUDED.boq_item_unit_price,
+                                event_supplier_price_bid_id = EXCLUDED.event_supplier_price_bid_id,
+                                modified_date = CURRENT_TIMESTAMP", pgConnection);
+
+                        upsertCmd.Parameters.AddWithValue("@event_boq_items_id", record.EventBoqItemsId.Value);
+                        upsertCmd.Parameters.AddWithValue("@event_id", record.EventId.Value);
+                        upsertCmd.Parameters.AddWithValue("@event_supplier_price_bid_id", eventSupplierPriceBidId);
+                        upsertCmd.Parameters.AddWithValue("@supplier_id", record.SupplierId.Value);
+                        upsertCmd.Parameters.AddWithValue("@boq_item_unit_price", record.Rate.Value);
+                        upsertCmd.Parameters.AddWithValue("@event_supplier_line_item_id", record.EventSupplierLineItemId.Value);
+
+                        await upsertCmd.ExecuteNonQueryAsync();
+                        upsertedRecords++;
+
+                        if (upsertedRecords % 100 == 0)
+                        {
+                            _logger.LogInformation($"Processed {upsertedRecords} UPSERT operations...");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError($"UPDATEID {record.UPDATEID}: {ex.Message}");
+                        skippedRecords++;
+                    }
+                }
+
+                _logger.LogInformation($"UPSERT completed. Upserted: {upsertedRecords}, Skipped: {skippedRecords}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "UPSERT migration failed");
+                throw;
+            }
+
+            return upsertedRecords;
+        }
+
         private class SourceRow
         {
             public int? EventBoqItemsId { get; set; }
@@ -379,6 +667,16 @@ namespace DataMigration.Services
             public int SupplierId { get; set; }
             public decimal BoqItemUnitPrice { get; set; }
             public int EventSupplierLineItemId { get; set; }
+        }
+
+        private class AucSupplierSubRow
+        {
+            public int? EventBoqItemsId { get; set; }
+            public int? EventId { get; set; }
+            public int? EventSupplierLineItemId { get; set; }
+            public int? SupplierId { get; set; }
+            public decimal? Rate { get; set; }
+            public int UPDATEID { get; set; }
         }
     }
 }
