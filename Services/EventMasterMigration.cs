@@ -340,7 +340,7 @@ public class EventMasterMigration : MigrationService
             // Get total count for progress tracking
             using (var countCmd = new SqlCommand("SELECT COUNT(*) FROM TBL_EVENTMASTER", sqlConnection))
             {
-                var scalarResult = await countCmd.ExecuteScalarAsync();
+                var scalarResult = await countCmd.ExecuteScalarAsync(); // sql
                 totalRecords = scalarResult != null && scalarResult != DBNull.Value ? Convert.ToInt32(scalarResult) : 0;
                 _logger.LogInformation($"Total records to migrate: {totalRecords}");
             }
