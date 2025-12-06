@@ -131,6 +131,11 @@
             color: white;
         }
 
+        .btn-download {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+        }
+
         .btn:disabled {
             opacity: 0.5;
             cursor: not-allowed;
@@ -485,6 +490,11 @@
                             ⏹ Stop
                         </button>
                     </div>
+                    <div style="margin-top: 10px;">
+                        <button class="btn btn-download" id="btnDownload" onclick="downloadExcelReport()" disabled style="width: 100%;">
+                            📊 Download Excel Report
+                        </button>
+                    </div>
                 </div>
 
                 <div class="progress-overview">
@@ -695,6 +705,7 @@
             document.getElementById('btnStart').disabled = true;
             document.getElementById('btnPause').disabled = false;
             document.getElementById('btnStop').disabled = false;
+            document.getElementById('btnDownload').disabled = false;
             document.getElementById('statusBadge').textContent = 'Running';
 
             addLog('Starting sequential migration...', 'success');
@@ -759,21 +770,31 @@
                         table: tableName,
                         status: 'success',
                         records: result.recordsMigrated || 0,
-                        duration: duration
+                        duration: duration,
+                        skippedRecords: result.skippedRecords || 0,
+                        skipReason: result.skipReason || 'N/A',
+                        errorMessage: 'N/A'
                     });
 
+                    const skipInfo = result.skippedRecords > 0 ? ` (${result.skippedRecords} skipped)` : '';
                     updateTimelineItem(currentIndex, 'success', 
-                        `✓ Migrated ${result.recordsMigrated || 0} records`, 
+                        `✓ Migrated ${result.recordsMigrated || 0} records${skipInfo}`, 
                         `Completed in ${duration}s`);
 
-                    addLog(`✓ ${tableName}: ${result.recordsMigrated || 0} records migrated in ${duration}s`, 'success');
+                    addLog(`✓ ${tableName}: ${result.recordsMigrated || 0} records migrated${skipInfo} in ${duration}s`, 'success');
+                    if (result.skippedRecords > 0) {
+                        addLog(`  ⚠ ${tableName}: ${result.skippedRecords} records skipped - ${result.skipReason || 'Unknown reason'}`, 'warning');
+                    }
                     addResultRow(currentIndex + 1, tableName, 'Success', result.recordsMigrated || 0, duration);
                 } else {
                     migrationResults.push({
                         table: tableName,
                         status: 'error',
                         records: 0,
-                        duration: duration
+                        duration: duration,
+                        skippedRecords: 0,
+                        skipReason: 'N/A',
+                        errorMessage: result.message || 'Unknown error'
                     });
 
                     updateTimelineItem(currentIndex, 'error', 
@@ -791,7 +812,10 @@
                     table: tableName,
                     status: 'error',
                     records: 0,
-                    duration: duration
+                    duration: duration,
+                    skippedRecords: 0,
+                    skipReason: 'N/A',
+                    errorMessage: error.message
                 });
 
                 updateTimelineItem(currentIndex, 'error', 
@@ -912,6 +936,107 @@
             
             addLog(`Migration completed! ${completed} successful, ${failed} failed.`, 
                 failed === 0 ? 'success' : 'warning');
+        }
+
+        // Download Excel Report
+        function downloadExcelReport() {
+            if (migrationResults.length === 0) {
+                addLog('No migration data to export. Please run migrations first.', 'warning');
+                return;
+            }
+
+            addLog('Generating Excel report...', 'info');
+            
+            // Prepare data for Excel
+            const reportData = {
+                summary: {
+                    totalTables: migrations.length,
+                    completed: migrationResults.filter(r => r.status === 'success').length,
+                    failed: migrationResults.filter(r => r.status === 'error').length,
+                    totalRecords: migrationResults.reduce((sum, r) => sum + r.records, 0),
+                    totalSkipped: migrationResults.reduce((sum, r) => sum + (r.skippedRecords || 0), 0),
+                    startTime: document.getElementById('startTime').textContent,
+                    endTime: document.getElementById('endTime').textContent,
+                    duration: document.getElementById('duration').textContent,
+                    avgSpeed: document.getElementById('avgSpeed').textContent
+                },
+                details: migrationResults.map((result, index) => ({
+                    index: index + 1,
+                    tableName: result.table,
+                    status: result.status,
+                    recordsMigrated: result.records,
+                    duration: result.duration,
+                    skippedRecords: result.skippedRecords || 0,
+                    skipReason: result.skipReason || 'N/A',
+                    errorMessage: result.errorMessage || 'N/A'
+                }))
+            };
+
+            // Create CSV content
+            let csvContent = "data:text/csv;charset=utf-8,";
+            
+            // Add Summary Section
+            csvContent += "MIGRATION SUMMARY REPORT\n";
+            csvContent += "Generated: " + new Date().toLocaleString() + "\n\n";
+            csvContent += "Metric,Value\n";
+            csvContent += `Total Tables,${reportData.summary.totalTables}\n`;
+            csvContent += `Completed Successfully,${reportData.summary.completed}\n`;
+            csvContent += `Failed,${reportData.summary.failed}\n`;
+            csvContent += `Total Records Migrated,${reportData.summary.totalRecords}\n`;
+            csvContent += `Total Records Skipped,${reportData.summary.totalSkipped}\n`;
+            csvContent += `Start Time,${reportData.summary.startTime}\n`;
+            csvContent += `End Time,${reportData.summary.endTime}\n`;
+            csvContent += `Total Duration,${reportData.summary.duration}\n`;
+            csvContent += `Average Speed,${reportData.summary.avgSpeed}\n\n`;
+            
+            // Add Detailed Results Section
+            csvContent += "DETAILED MIGRATION RESULTS\n";
+            csvContent += "#,Table Name,Status,Records Migrated,Records Skipped,Skip Reason,Duration (sec),Error Message\n";
+            
+            reportData.details.forEach(detail => {
+                csvContent += `${detail.index},${detail.tableName},${detail.status},${detail.recordsMigrated},${detail.skippedRecords},"${detail.skipReason}",${detail.duration},"${detail.errorMessage}"\n`;
+            });
+            
+            // Add Statistics Section
+            csvContent += "\nSTATISTICS BY STATUS\n";
+            const successTables = reportData.details.filter(d => d.status === 'success');
+            const failedTables = reportData.details.filter(d => d.status === 'error');
+            
+            csvContent += "Status,Count,Total Records,Total Skipped\n";
+            csvContent += `Success,${successTables.length},${successTables.reduce((sum, t) => sum + t.recordsMigrated, 0)},${successTables.reduce((sum, t) => sum + t.skippedRecords, 0)}\n`;
+            csvContent += `Failed,${failedTables.length},${failedTables.reduce((sum, t) => sum + t.recordsMigrated, 0)},${failedTables.reduce((sum, t) => sum + t.skippedRecords, 0)}\n\n`;
+            
+            // Add Skipped Records Details if any
+            const skippedTables = reportData.details.filter(d => d.skippedRecords > 0);
+            if (skippedTables.length > 0) {
+                csvContent += "TABLES WITH SKIPPED RECORDS\n";
+                csvContent += "Table Name,Records Migrated,Records Skipped,Skip Reason\n";
+                skippedTables.forEach(table => {
+                    csvContent += `${table.tableName},${table.recordsMigrated},${table.skippedRecords},"${table.skipReason}"\n`;
+                });
+                csvContent += "\n";
+            }
+            
+            // Add Failed Tables Details if any
+            if (failedTables.length > 0) {
+                csvContent += "FAILED TABLES DETAIL\n";
+                csvContent += "Table Name,Error Message,Duration\n";
+                failedTables.forEach(table => {
+                    csvContent += `${table.tableName},"${table.errorMessage}",${table.duration}\n`;
+                });
+            }
+
+            // Create download link
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `Migration_Report_${new Date().toISOString().split('T')[0]}.csv`);
+            document.body.appendChild(link);
+            
+            link.click();
+            document.body.removeChild(link);
+            
+            addLog('Excel report downloaded successfully!', 'success');
         }
 
         // Initialize on page load

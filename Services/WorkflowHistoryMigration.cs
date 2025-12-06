@@ -32,7 +32,7 @@ public class WorkflowHistoryMigration : MigrationService
         return new List<string> 
         { 
             "WFHistory_ID -> workflow_history_id (Direct)",
-            "Entry -> workflow_for (Transform: 'CS Approval' -> 'NFA Approval')",
+            "Entry -> workflow_for (Direct)",
             "Entry_ID -> workflow_for_id (Direct)",
             "Approvedby -> approved_by (Convert to ARRAY with AlternateApprovedBy)",
             "AlternateApprovedBy -> approved_by (Combined with Approvedby in ARRAY)",
@@ -63,7 +63,7 @@ public class WorkflowHistoryMigration : MigrationService
         return new List<object>
         {
             new { source = "WFHistory_ID", logic = "WFHistory_ID -> workflow_history_id (Direct)", target = "workflow_history_id" },
-            new { source = "Entry", logic = "Entry -> workflow_for (Transform: 'CS Approval' -> 'NFA Approval')", target = "workflow_for" },
+            new { source = "Entry", logic = "Entry -> workflow_for (Direct)", target = "workflow_for" },
             new { source = "Entry_ID", logic = "Entry_ID -> workflow_for_id (Direct)", target = "workflow_for_id" },
             new { source = "Approvedby", logic = "Approvedby -> approved_by (Convert to ARRAY with AlternateApprovedBy)", target = "approved_by" },
             new { source = "AlternateApprovedBy", logic = "AlternateApprovedBy -> approved_by (Combined with Approvedby)", target = "approved_by" },
@@ -88,21 +88,9 @@ public class WorkflowHistoryMigration : MigrationService
         };
     }
 
-    /// <summary>
-    /// Migrates main workflow history records, then automatically migrates technical approval history
-    /// </summary>
-    public override async Task<int> MigrateAsync(bool useTransaction = true)
+    public async Task<int> MigrateAsync()
     {
-        Console.WriteLine("Starting Workflow History Migration (Main)...");
-        var mainRecordCount = await base.MigrateAsync(useTransaction: useTransaction);
-        Console.WriteLine($"Main Workflow History Migration completed: {mainRecordCount} records");
-        
-        Console.WriteLine("\nStarting Technical Approval History Migration (Post-Migration)...");
-        var technicalRecordCount = await MigrateTechnicalApprovalHistoryAsync();
-        Console.WriteLine($"Technical Approval History Migration completed: {technicalRecordCount} records");
-        
-        Console.WriteLine($"\nTotal Workflow History Records: {mainRecordCount + technicalRecordCount}");
-        return mainRecordCount + technicalRecordCount;
+        return await base.MigrateAsync(useTransaction: true);
     }
 
     /// <summary>
@@ -268,12 +256,6 @@ public class WorkflowHistoryMigration : MigrationService
         if (wfHistoryId <= 0) return null;
 
         var entry = reader.IsDBNull(1) ? "" : reader.GetString(1); // Entry
-        
-        // Transform Entry: "CS Approval" -> "NFA Approval"
-        if (entry == "CS Approval")
-        {
-            entry = "NFA Approval";
-        }
         var entryId = reader.IsDBNull(2) ? 0 : reader.GetInt32(2); // Entry_ID
         var workFlowId = reader.IsDBNull(3) ? (int?)null : reader.GetInt32(3); // WorkFlowId
         var approvedBy = reader.IsDBNull(4) ? (int?)null : reader.GetInt32(4); // Approvedby
@@ -346,12 +328,6 @@ public class WorkflowHistoryMigration : MigrationService
             // Map fields with validation
             var wfHistoryId = reader.IsDBNull(reader.GetOrdinal("WFHistory_ID")) ? 0 : Convert.ToInt32(reader["WFHistory_ID"]);
             var entry = reader.IsDBNull(reader.GetOrdinal("Entry")) ? "" : reader["Entry"].ToString();
-            
-            // Transform Entry: "CS Approval" -> "NFA Approval"
-            if (entry == "CS Approval")
-            {
-                entry = "NFA Approval";
-            }
             var entryId = reader.IsDBNull(reader.GetOrdinal("Entry_ID")) ? 0 : Convert.ToInt32(reader["Entry_ID"]);
             var workFlowId = reader.IsDBNull(reader.GetOrdinal("WorkFlowId")) ? (int?)null : Convert.ToInt32(reader["WorkFlowId"]);
             var approvedBy = reader.IsDBNull(reader.GetOrdinal("Approvedby")) ? (int?)null : Convert.ToInt32(reader["Approvedby"]);
@@ -522,234 +498,7 @@ public class WorkflowHistoryMigration : MigrationService
         return batch.Count;
     }
 
-    /// <summary>
-    /// Migrates Technical Approval History records into workflow_history table
-    /// This should be run AFTER the main WorkflowHistoryMigration completes
-    /// </summary>
-    public async Task<int> MigrateTechnicalApprovalHistoryAsync()
-    {
-        var stopwatch = Stopwatch.StartNew();
-        var insertedCount = 0;
-        var skippedCount = 0;
-
-        try
-        {
-            using var sqlConn = GetSqlServerConnection();
-            using var pgConn = GetPostgreSqlConnection();
-
-            await sqlConn.OpenAsync();
-            await pgConn.OpenAsync();
-
-            Console.WriteLine("Starting Technical Approval History migration...");
-
-            // Get the maximum workflow_history_id to avoid conflicts
-            int maxWorkflowHistoryId = 0;
-            using (var maxCmd = new NpgsqlCommand("SELECT COALESCE(MAX(workflow_history_id), 0) FROM workflow_history", pgConn))
-            {
-                maxWorkflowHistoryId = Convert.ToInt32(await maxCmd.ExecuteScalarAsync());
-                Console.WriteLine($"Current max workflow_history_id: {maxWorkflowHistoryId}");
-            }
-
-            // Query from TBL_TechnicalApproval_History
-            var selectQuery = @"
-                SELECT 
-                    'Technical Approval' as WorkflowFor,
-                    EVENT_ID as workflow_for_id,
-                    ApprovalUserId as Approvedby, 
-                    ActionDate as Action_taken_date,
-                    Actionby as action_taken_user,
-                    ActionRemark as Action_taken_Remarks,
-                    ActionStatus as action_Status,
-                    'Active' as Workflow_for_Status,
-                    LevelId as workflow_level,
-                    1 as Workflow_round,
-                    CreatedBy,
-                    CreatedDate
-                FROM TBL_TechnicalApproval_History
-                ORDER BY EVENT_ID";
-
-            using var sqlCmd = new SqlCommand(selectQuery, sqlConn);
-            sqlCmd.CommandTimeout = 600;
-            using var reader = await sqlCmd.ExecuteReaderAsync();
-
-            var batch = new List<TechnicalApprovalHistoryRecord>();
-            var currentId = maxWorkflowHistoryId + 1;
-
-            while (await reader.ReadAsync())
-            {
-                try
-                {
-                    var workflowForId = reader.IsDBNull(reader.GetOrdinal("workflow_for_id")) ? 0 : reader.GetInt32(reader.GetOrdinal("workflow_for_id"));
-                    
-                    if (workflowForId <= 0)
-                    {
-                        skippedCount++;
-                        continue;
-                    }
-
-                    var approvedBy = reader.IsDBNull(reader.GetOrdinal("Approvedby")) ? (int?)null : reader.GetInt32(reader.GetOrdinal("Approvedby"));
-                    var actionDate = reader.IsDBNull(reader.GetOrdinal("Action_taken_date")) ? (DateTime?)null : reader.GetDateTime(reader.GetOrdinal("Action_taken_date"));
-                    var actionBy = reader.IsDBNull(reader.GetOrdinal("action_taken_user")) ? (int?)null : reader.GetInt32(reader.GetOrdinal("action_taken_user"));
-                    var actionRemark = reader.IsDBNull(reader.GetOrdinal("Action_taken_Remarks")) ? "" : reader.GetString(reader.GetOrdinal("Action_taken_Remarks"));
-                    var actionStatus = reader.IsDBNull(reader.GetOrdinal("action_Status")) ? "" : reader.GetString(reader.GetOrdinal("action_Status"));
-                    var workflowLevel = reader.IsDBNull(reader.GetOrdinal("workflow_level")) ? (int?)null : reader.GetInt32(reader.GetOrdinal("workflow_level"));
-                    var createdBy = reader.IsDBNull(reader.GetOrdinal("CreatedBy")) ? (int?)null : reader.GetInt32(reader.GetOrdinal("CreatedBy"));
-                    var createdDate = reader.IsDBNull(reader.GetOrdinal("CreatedDate")) ? DateTime.UtcNow : reader.GetDateTime(reader.GetOrdinal("CreatedDate"));
-
-                    // Create approved_by array
-                    int[]? approvedByArray = null;
-                    if (approvedBy.HasValue && approvedBy.Value > 0)
-                    {
-                        approvedByArray = new int[] { approvedBy.Value };
-                    }
-
-                    var record = new TechnicalApprovalHistoryRecord
-                    {
-                        WorkflowHistoryId = currentId++,
-                        WorkflowFor = "Technical Approval",
-                        WorkflowForId = workflowForId,
-                        ApprovedBy = approvedByArray,
-                        ActionTakenDate = actionDate,
-                        ActionTakenUser = actionBy,
-                        ActionTakenRemarks = actionRemark,
-                        ActionStatus = actionStatus,
-                        WorkflowForStatus = "Active",
-                        WorkflowLevel = workflowLevel,
-                        WorkflowRound = 1,
-                        CreatedBy = createdBy,
-                        CreatedDate = createdDate
-                    };
-
-                    batch.Add(record);
-
-                    if (batch.Count >= BATCH_SIZE)
-                    {
-                        var batchInserted = await ProcessTechnicalApprovalBatch(batch, pgConn);
-                        insertedCount += batchInserted;
-                        batch.Clear();
-
-                        if (insertedCount % 5000 == 0)
-                        {
-                            var elapsed = stopwatch.Elapsed;
-                            var rate = insertedCount / elapsed.TotalSeconds;
-                            Console.WriteLine($"Inserted: {insertedCount:N0}, Skipped: {skippedCount:N0}, Rate: {rate:F1}/sec, Elapsed: {elapsed:mm\\:ss}");
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error processing technical approval record: {ex.Message}");
-                    skippedCount++;
-                }
-            }
-
-            // Process remaining batch
-            if (batch.Count > 0)
-            {
-                var batchInserted = await ProcessTechnicalApprovalBatch(batch, pgConn);
-                insertedCount += batchInserted;
-            }
-
-            stopwatch.Stop();
-            var totalRate = insertedCount / stopwatch.Elapsed.TotalSeconds;
-            Console.WriteLine($"Technical Approval History migration completed. Total time: {stopwatch.Elapsed:mm\\:ss}, Rate: {totalRate:F1}/sec");
-            Console.WriteLine($"Final counts - Inserted: {insertedCount:N0}, Skipped: {skippedCount:N0}");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error during Technical Approval History migration: {ex.Message}");
-            throw;
-        }
-
-        return insertedCount;
-    }
-
-    private async Task<int> ProcessTechnicalApprovalBatch(List<TechnicalApprovalHistoryRecord> batch, NpgsqlConnection pgConn)
-    {
-        if (batch.Count == 0) return 0;
-
-        const string copyCommand = @"COPY workflow_history (
-            workflow_history_id, workflow_for, workflow_for_id, approved_by, action_taken_date, action_taken_user, 
-            action_taken_remarks, action_status, workflow_for_status, workflow_level, workflow_master_id, 
-            workflow_round, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, 
-            deleted_date, workflow_amount_id, workflow_approval_user_id, plant_id
-        ) FROM STDIN (FORMAT BINARY)";
-
-        using var writer = await pgConn.BeginBinaryImportAsync(copyCommand);
-
-        foreach (var record in batch)
-        {
-            await writer.StartRowAsync();
-            await writer.WriteAsync(record.WorkflowHistoryId, NpgsqlDbType.Integer);
-            await writer.WriteAsync(record.WorkflowFor, NpgsqlDbType.Text);
-            await writer.WriteAsync(record.WorkflowForId, NpgsqlDbType.Integer);
-            
-            if (record.ApprovedBy != null)
-                await writer.WriteAsync(record.ApprovedBy, NpgsqlDbType.Array | NpgsqlDbType.Integer);
-            else
-                await writer.WriteAsync(DBNull.Value, NpgsqlDbType.Array | NpgsqlDbType.Integer);
-            
-            if (record.ActionTakenDate.HasValue)
-                await writer.WriteAsync(record.ActionTakenDate.Value, NpgsqlDbType.Timestamp);
-            else
-                await writer.WriteAsync(DBNull.Value, NpgsqlDbType.Timestamp);
-                
-            if (record.ActionTakenUser.HasValue)
-                await writer.WriteAsync(record.ActionTakenUser.Value, NpgsqlDbType.Integer);
-            else
-                await writer.WriteAsync(DBNull.Value, NpgsqlDbType.Integer);
-            
-            await writer.WriteAsync(record.ActionTakenRemarks, NpgsqlDbType.Text);
-            await writer.WriteAsync(record.ActionStatus, NpgsqlDbType.Text);
-            await writer.WriteAsync(record.WorkflowForStatus, NpgsqlDbType.Text);
-            
-            if (record.WorkflowLevel.HasValue)
-                await writer.WriteAsync(record.WorkflowLevel.Value, NpgsqlDbType.Integer);
-            else
-                await writer.WriteAsync(DBNull.Value, NpgsqlDbType.Integer);
-                
-            await writer.WriteAsync(DBNull.Value, NpgsqlDbType.Integer); // workflow_master_id
-            await writer.WriteAsync(record.WorkflowRound, NpgsqlDbType.Integer);
-                
-            if (record.CreatedBy.HasValue)
-                await writer.WriteAsync(record.CreatedBy.Value, NpgsqlDbType.Integer);
-            else
-                await writer.WriteAsync(DBNull.Value, NpgsqlDbType.Integer);
-                
-            await writer.WriteAsync(record.CreatedDate, NpgsqlDbType.Timestamp);
-            await writer.WriteAsync(DBNull.Value, NpgsqlDbType.Integer); // modified_by
-            await writer.WriteAsync(DBNull.Value, NpgsqlDbType.Timestamp); // modified_date
-            await writer.WriteAsync(false, NpgsqlDbType.Boolean); // is_deleted
-            await writer.WriteAsync(DBNull.Value, NpgsqlDbType.Integer); // deleted_by
-            await writer.WriteAsync(DBNull.Value, NpgsqlDbType.Timestamp); // deleted_date
-            await writer.WriteAsync(0, NpgsqlDbType.Integer); // workflow_amount_id
-            await writer.WriteAsync(0, NpgsqlDbType.Integer); // workflow_approval_user_id
-            await writer.WriteAsync(DBNull.Value, NpgsqlDbType.Integer); // plant_id
-        }
-
-        await writer.CompleteAsync();
-        return batch.Count;
-    }
-
-    // Data class for Technical Approval History
-    private class TechnicalApprovalHistoryRecord
-    {
-        public int WorkflowHistoryId { get; set; }
-        public string WorkflowFor { get; set; } = "Technical Approval";
-        public int WorkflowForId { get; set; }
-        public int[]? ApprovedBy { get; set; }
-        public DateTime? ActionTakenDate { get; set; }
-        public int? ActionTakenUser { get; set; }
-        public string ActionTakenRemarks { get; set; } = "";
-        public string ActionStatus { get; set; } = "";
-        public string WorkflowForStatus { get; set; } = "Active";
-        public int? WorkflowLevel { get; set; }
-        public int WorkflowRound { get; set; } = 1;
-        public int? CreatedBy { get; set; }
-        public DateTime CreatedDate { get; set; }
-    }
-
-    // Data class for Workflow History
+    // Data class for batch processing
     private class WorkflowHistoryRecord
     {
         public int WorkflowHistoryId { get; set; }
