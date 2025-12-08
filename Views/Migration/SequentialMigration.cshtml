@@ -467,7 +467,7 @@
     <div class="container">
         <div class="header">
             <h1>🚀 Sequential Migration Executor</h1>
-            <p>Automated Database Migration Pipeline - 103 Tables</p>
+            <p>Automated Database Migration Pipeline - 89 Tables</p>
         </div>
 
         <div class="main-content">
@@ -489,10 +489,24 @@
                         <button class="btn btn-stop" id="btnStop" onclick="stopMigration()" disabled>
                             ⏹ Stop
                         </button>
+                        <button class="btn" id="btnReset" onclick="resetMigration()" 
+                                style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                            🔄 Reset
+                        </button>
                     </div>
                     <div style="margin-top: 10px;">
                         <button class="btn btn-download" id="btnDownload" onclick="downloadExcelReport()" disabled style="width: 100%;">
                             📊 Download Excel Report
+                        </button>
+                    </div>
+                    <div style="margin-top: 10px; display: flex; gap: 10px;">
+                        <button class="btn" id="btnSeedData" onclick="runSeedData()" 
+                                style="flex: 1; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white;">
+                            🌱 Run Seed Data
+                        </button>
+                        <button class="btn" id="btnTruncate" onclick="truncateDatabase()" 
+                                style="flex: 1; background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%); color: white;">
+                            🗑️ Truncate Database
                         </button>
                     </div>
                 </div>
@@ -500,7 +514,7 @@
                 <div class="progress-overview">
                     <div class="progress-stats">
                         <div class="stat-card">
-                            <div class="stat-number" id="totalCount">103</div>
+                            <div class="stat-number" id="totalCount">89</div>
                             <div class="stat-label">Total Tables</div>
                         </div>
                         <div class="stat-card success">
@@ -512,7 +526,7 @@
                             <div class="stat-label">Failed</div>
                         </div>
                         <div class="stat-card pending">
-                            <div class="stat-number" id="pendingCount">103</div>
+                            <div class="stat-number" id="pendingCount">89</div>
                             <div class="stat-label">Pending</div>
                         </div>
                     </div>
@@ -604,43 +618,97 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/6.0.1/signalr.min.js"></script>
     <script>
-        // Migration configuration
+        // Migration configuration - maps display names to API table names
         const migrations = [
-            'company_master', 'users', 'valuation_type_master', 'country_master', 'currency_master',
-            'incoterm_master', 'material_group_master', 'payment_term_master', 'plant_master',
-            'purchase_group_master', 'po_doc_type_master', 'po_condition_master',
-            'purchase_organization_master', 'tax_code_master', 'tax_master', 'uom_master',
-            'price_bid_charges_master', 'term_master', 'term_template_master',
-            'type_of_category_master', 'user_company_master', 'workflow_master',
-            'workflow_master_history', 'workflow_amount', 'workflow_amount_history',
-            'workflow_approval_user', 'workflow_approval_user_history',
-            'erp_currency_exchange_rate', 'material_master', 'supplier_groupmaster',
-            'supplier_master', 'supplier_inactive', 'supplier_other_contact',
-            'supplier_payment_incoterm', 'supplier_bank_deails', 'erp_pr_lines',
-            'pr_boq_items', 'pr_attachments', 'event_master', 'event_items',
-            'event_boq_items', 'event_setting', 'event_setting_history',
-            'auction_min_max_target_price', 'auction_min_max_target_price_history',
-            'sourcelist_master', 'event_collaboration', 'assigned_event_vendor',
-            'event_freeze_currency', 'event_price_bid_columns', 'event_schedule',
-            'event_schedule_history', 'technical_documents', 'technical_parameter_template',
-            'user_term', 'user_technical_parameter', 'technical_approval_workflow',
-            'technical_approval_score', 'technical_approval_score_history',
-            'user_price_bid_lot_charges', 'user_price_bid_non_pricing', 'event_publish',
-            'event_communication_sender', 'event_communication_receiver',
-            'event_communication_attachment', 'supplier_price_bid_lot_price',
-            'supplier_price_bid_lot_price_history', 'event_supplier_price_bid',
-            'event_supplier_price_bid_history', 'event_supplier_line_item',
-            'event_supplier_line_item_history', 'supplier_price_bid_non_pricing',
-            'supplier_price_bid_non_pricing_history', 'supplier_price_boq_items',
-            'supplier_price_boq_items_history', 'supplier_price_bid_lot_charges',
-            'supplier_price_bid_lot_charges_history', 'supplier_price_bid_document',
-            'supplier_event_price_bid_columns', 'supplier_technical_parameter',
-            'supplier_terms', 'supplier_term_deviations', 'nfa_header', 'nfa_line',
-            'nfa_lot_charges', 'nfa_boq_items', 'nfa_attachments', 'nfa_clarification',
-            'nfa_po_condition', 'nfa_workflow', 'po_header', 'po_line', 'arc_header',
-            'arc_header_history', 'arc_lines', 'arc_lines_history', 'arc_plant',
-            'arc_plant_history', 'arc_workflow', 'arc_workflow_history',
-            'arc_attachements', 'arc_attachements_history', 'workflow_history'
+            { display: 'CompanyMaster', api: 'companymaster' },
+            { display: 'Users', api: 'users' },
+            { display: 'ValuationType', api: 'valuationtype' },
+            { display: 'Country', api: 'country' },
+            { display: 'Currency', api: 'currency' },
+            { display: 'Incoterm', api: 'incoterm' },
+            { display: 'MaterialGroup', api: 'materialgroup' },
+            { display: 'PaymentTerm', api: 'paymentterm' },
+            { display: 'Plant', api: 'plant' },
+            { display: 'PurchaseGroup', api: 'purchasegroup' },
+            { display: 'PODocType', api: 'podoctype' },
+            { display: 'POCondition', api: 'pocondition' },
+            { display: 'PurchaseOrganization', api: 'purchaseorganization' },
+            { display: 'TaxCode', api: 'taxcodemaster' },
+            { display: 'Tax', api: 'tax' },
+            { display: 'UOM', api: 'uom' },
+            { display: 'PriceBidCharges', api: 'pricebidchargesmaster' },
+            { display: 'TermMaster', api: 'termmaster' },
+            { display: 'TermTemplate', api: 'termtemplatemaster' },
+            { display: 'TypeOfCategory', api: 'typeofcategory' },
+            { display: 'UserCompany', api: 'usercompanymaster' },
+            { display: 'Workflow', api: 'workflow' },
+            { display: 'WorkflowHistory', api: 'workflowhistory' },
+            { display: 'WorkflowAmount', api: 'workflowamount' },
+            { display: 'WorkflowAmountHistory', api: 'workflowamounthistory' },
+            { display: 'WorkflowApprovalUser', api: 'workflowapprovaluser' },
+            { display: 'WorkflowApprovalUserHistory', api: 'workflowapprovaluserhistory' },
+            { display: 'ERPCurrencyExchange', api: 'erpcurrencyexchangerate' },
+            { display: 'Material', api: 'material' },
+            { display: 'SupplierGroup', api: 'suppliergroup' },
+            { display: 'Supplier', api: 'supplier' },
+            { display: 'SupplierInactive', api: 'supplierinactive' },
+            { display: 'SupplierOtherContact', api: 'supplierothercontact' },
+            { display: 'SupplierPaymentIncoterm', api: 'supplierpaymentincoterm' },
+            { display: 'SupplierBankDetails', api: 'supplierbankdetails' },
+            { display: 'ERPPRLines', api: 'erpprlines' },
+            { display: 'PRBoqItems', api: 'prboqitems' },
+            { display: 'PRAttachment', api: 'prattachment' },
+            { display: 'EventMaster', api: 'eventmaster' },
+            { display: 'EventItems', api: 'eventitems' },
+            { display: 'EventBoqItems', api: 'eventboqitems' },
+            { display: 'EventSchedule', api: 'eventschedule' },
+            { display: 'EventScheduleHistory', api: 'eventschedulehistory' },
+            { display: 'AuctionMinMaxTarget', api: 'auctionminmaxtargetprice' },
+            { display: 'SourceList', api: 'sourcelistmaster' },
+            { display: 'EventCollaboration', api: 'eventcollaboration' },
+            { display: 'AssignedEventVendor', api: 'assignedeventvendor' },
+            { display: 'EventFreezeCurrency', api: 'eventfreezecurrency' },
+            { display: 'EventPriceBidColumns', api: 'eventpricebidcolumns' },
+            { display: 'TechnicalDocuments', api: 'technicaldocuments' },
+            { display: 'TechnicalParameterTemplate', api: 'technicalparametertemplate' },
+            { display: 'UserTerm', api: 'userterm' },
+            { display: 'UserTechnicalParameter', api: 'usertechnicalparameter' },
+            { display: 'TechnicalApprovalWorkflow', api: 'technicalapprovalworkflow' },
+            { display: 'TechnicalApprovalScore', api: 'technicalapprovalscore' },
+            { display: 'TechnicalApprovalScoreHistory', api: 'technicalapprovalscorehistory' },
+            { display: 'UserPriceBidLotCharges', api: 'userpricebidlotcharges' },
+            { display: 'UserPriceBidNonPricing', api: 'userpricebidnonpricing' },
+            { display: 'EventPublish', api: 'eventpublish' },
+            { display: 'EventCommunicationSender', api: 'eventcommunicationsender' },
+            { display: 'EventCommunicationReceiver', api: 'eventcommunicationreceiver' },
+            { display: 'EventCommunicationAttachment', api: 'eventcommunicationattachment' },
+            { display: 'SupplierPriceBidLotPrice', api: 'supplierpricebidlotprice' },
+            { display: 'EventSupplierPriceBid', api: 'eventsupplierpricebid' },
+            { display: 'EventSupplierLineItem', api: 'eventsupplierlineitem' },
+            { display: 'SupplierPriceBidNonPricing', api: 'supplierpricebidnonpricing' },
+            { display: 'SupplierPriceBoqItems', api: 'supplierpriceboqitems' },
+            { display: 'SupplierPriceBidLotCharges', api: 'supplierpricebidlotcharges' },
+            { display: 'SupplierPriceBidDocument', api: 'supplierpricebiddocument' },
+            { display: 'SupplierEventPriceBidColumns', api: 'suppliereventpricebidcolumns' },
+            { display: 'SupplierTechnicalParameter', api: 'suppliertechnicalparameter' },
+            { display: 'SupplierTerms', api: 'supplierterms' },
+            { display: 'SupplierTermDeviations', api: 'suppliertermdeviations' },
+            { display: 'NFAHeader', api: 'nfaheader' },
+            { display: 'NFALine', api: 'nfaline' },
+            { display: 'NFALotCharges', api: 'nfalotcharges' },
+            { display: 'NFABoqItems', api: 'nfaboqitems' },
+            { display: 'NFAAttachments', api: 'nfaattachments' },
+            { display: 'NFAClarification', api: 'nfaclarification' },
+            { display: 'NFAPOCondition', api: 'nfapocondition' },
+            { display: 'NFAWorkflow', api: 'nfaworkflow' },
+            { display: 'POHeader', api: 'poheader' },
+            { display: 'POLine', api: 'poline' },
+            { display: 'ARCMain', api: 'arcmain' },
+            { display: 'ARCSub', api: 'arcsub' },
+            { display: 'ARCPlant', api: 'arcplant' },
+            { display: 'ARCAttachment', api: 'arcattachment' },
+            { display: 'ARCApprovalAuthority', api: 'arcapprovalauthority' },
+            { display: 'WorkflowHistoryTable', api: 'workflowhistorytable' }
         ];
 
         let currentIndex = 0;
@@ -649,6 +717,14 @@
         let startTime = null;
         let migrationResults = [];
         let connection = null;
+        
+        // Local storage keys
+        const STORAGE_KEYS = {
+            RESULTS: 'migrationResults',
+            CURRENT_INDEX: 'currentMigrationIndex',
+            START_TIME: 'migrationStartTime',
+            STATUS: 'migrationStatus'
+        };
 
         // Initialize SignalR
         async function initializeSignalR() {
@@ -668,12 +744,70 @@
             }
         }
 
+        // Storage functions
+        function saveMigrationState() {
+            localStorage.setItem(STORAGE_KEYS.RESULTS, JSON.stringify(migrationResults));
+            localStorage.setItem(STORAGE_KEYS.CURRENT_INDEX, currentIndex.toString());
+            localStorage.setItem(STORAGE_KEYS.START_TIME, startTime ? startTime.toISOString() : '');
+            localStorage.setItem(STORAGE_KEYS.STATUS, isPaused ? 'paused' : (isStopped ? 'stopped' : 'running'));
+        }
+
+        function loadMigrationState() {
+            const savedResults = localStorage.getItem(STORAGE_KEYS.RESULTS);
+            const savedIndex = localStorage.getItem(STORAGE_KEYS.CURRENT_INDEX);
+            const savedStartTime = localStorage.getItem(STORAGE_KEYS.START_TIME);
+            const savedStatus = localStorage.getItem(STORAGE_KEYS.STATUS);
+
+            if (savedResults) {
+                migrationResults = JSON.parse(savedResults);
+                updateStatistics();
+                
+                // Rebuild timeline based on saved results
+                migrationResults.forEach((result, index) => {
+                    updateTimelineItem(index, result.status, result.details, result.time);
+                    if (result.status === 'success') {
+                        addResultRow(index + 1, result.table, 'Success', result.records, result.duration);
+                    } else if (result.status === 'error') {
+                        addResultRow(index + 1, result.table, 'Failed', 0, result.duration);
+                    }
+                });
+            }
+
+            if (savedIndex) {
+                currentIndex = parseInt(savedIndex);
+            }
+
+            if (savedStartTime && savedStartTime !== '') {
+                startTime = new Date(savedStartTime);
+                document.getElementById('startTime').textContent = startTime.toLocaleString();
+            }
+
+            if (savedStatus === 'paused') {
+                isPaused = true;
+                document.getElementById('statusBadge').textContent = 'Paused';
+                document.getElementById('btnStart').disabled = false;
+                document.getElementById('btnPause').disabled = true;
+                addLog('Migration state restored: Paused', 'warning');
+            } else if (savedStatus === 'stopped') {
+                isStopped = true;
+                document.getElementById('statusBadge').textContent = 'Stopped';
+                addLog('Migration state restored: Stopped', 'info');
+            }
+        }
+
+        function clearMigrationState() {
+            localStorage.removeItem(STORAGE_KEYS.RESULTS);
+            localStorage.removeItem(STORAGE_KEYS.CURRENT_INDEX);
+            localStorage.removeItem(STORAGE_KEYS.START_TIME);
+            localStorage.removeItem(STORAGE_KEYS.STATUS);
+        }
+
         // Initialize timeline
         function initializeTimeline() {
             const container = document.getElementById('timelineContainer');
             container.innerHTML = '';
 
-            migrations.forEach((table, index) => {
+            migrations.forEach((migration, index) => {
                 const item = document.createElement('div');
                 item.className = 'timeline-item';
                 item.id = `timeline-${index}`;
@@ -681,8 +815,8 @@
                     <div class="timeline-marker pending">${index + 1}</div>
                     <div class="timeline-content">
                         <div class="timeline-header">
-                            <div class="timeline-title">${table}</div>
-                            <div class="timeline-status pending">Pending</div>
+                            <div class="timeline-title">${migration.display}</div>
+                            <div class="timeline-status pending" id="status-${index}">Pending</div>
                         </div>
                         <div class="timeline-details" id="details-${index}">Waiting to start...</div>
                         <div class="timeline-time" id="time-${index}"></div>
@@ -694,9 +828,10 @@
 
         // Start migration
         async function startMigration() {
-            if (currentIndex === 0) {
+            if (currentIndex === 0 && !startTime) {
                 startTime = new Date();
                 document.getElementById('startTime').textContent = startTime.toLocaleString();
+                clearMigrationState(); // Clear old state when starting fresh
             }
 
             isPaused = false;
@@ -708,7 +843,11 @@
             document.getElementById('btnDownload').disabled = false;
             document.getElementById('statusBadge').textContent = 'Running';
 
-            addLog('Starting sequential migration...', 'success');
+            if (currentIndex === 0) {
+                addLog('Starting sequential migration...', 'success');
+            } else {
+                addLog(`Resuming migration from table ${currentIndex + 1}/${migrations.length}...`, 'success');
+            }
 
             await executeNextMigration();
         }
@@ -719,6 +858,7 @@
             document.getElementById('btnStart').disabled = false;
             document.getElementById('btnPause').disabled = true;
             document.getElementById('statusBadge').textContent = 'Paused';
+            saveMigrationState();
             addLog('Migration paused', 'warning');
         }
 
@@ -730,6 +870,7 @@
             document.getElementById('btnPause').disabled = true;
             document.getElementById('btnStop').disabled = true;
             document.getElementById('statusBadge').textContent = 'Stopped';
+            saveMigrationState();
             addLog('Migration stopped by user', 'error');
         }
 
@@ -744,77 +885,86 @@
                 return;
             }
 
-            const tableName = migrations[currentIndex];
+            const migration = migrations[currentIndex];
             const startMigTime = new Date();
 
             // Update UI
             updateTimelineItem(currentIndex, 'running', 'Migrating...', '');
 
-            addLog(`Starting migration: ${tableName}`, 'info');
+            addLog(`Starting migration: ${migration.display}`, 'info');
 
             try {
-                // Call the migration API
-                const response = await fetch(`/Migration/Migrate/${tableName}`, {
+                // Call the migration API with correct endpoint
+                const response = await fetch('/Migration/MigrateAsync', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
-                    }
+                    },
+                    body: JSON.stringify({
+                        table: migration.api,
+                        mappings: []
+                    })
                 });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
 
                 const result = await response.json();
                 const endMigTime = new Date();
                 const duration = ((endMigTime - startMigTime) / 1000).toFixed(2);
 
                 if (result.success) {
+                    const recordCount = extractRecordCount(result.message);
+                    
                     migrationResults.push({
-                        table: tableName,
+                        table: migration.display,
+                        apiName: migration.api,
                         status: 'success',
-                        records: result.recordsMigrated || 0,
+                        records: recordCount,
                         duration: duration,
-                        skippedRecords: result.skippedRecords || 0,
-                        skipReason: result.skipReason || 'N/A',
+                        details: result.message,
+                        time: new Date().toLocaleTimeString(),
                         errorMessage: 'N/A'
                     });
 
-                    const skipInfo = result.skippedRecords > 0 ? ` (${result.skippedRecords} skipped)` : '';
                     updateTimelineItem(currentIndex, 'success', 
-                        `✓ Migrated ${result.recordsMigrated || 0} records${skipInfo}`, 
+                        `✓ Migrated ${recordCount} records`, 
                         `Completed in ${duration}s`);
 
-                    addLog(`✓ ${tableName}: ${result.recordsMigrated || 0} records migrated${skipInfo} in ${duration}s`, 'success');
-                    if (result.skippedRecords > 0) {
-                        addLog(`  ⚠ ${tableName}: ${result.skippedRecords} records skipped - ${result.skipReason || 'Unknown reason'}`, 'warning');
-                    }
-                    addResultRow(currentIndex + 1, tableName, 'Success', result.recordsMigrated || 0, duration);
+                    addLog(`✓ ${migration.display}: ${result.message}`, 'success');
+                    addResultRow(currentIndex + 1, migration.display, 'Success', recordCount, duration);
                 } else {
                     migrationResults.push({
-                        table: tableName,
+                        table: migration.display,
+                        apiName: migration.api,
                         status: 'error',
                         records: 0,
                         duration: duration,
-                        skippedRecords: 0,
-                        skipReason: 'N/A',
-                        errorMessage: result.message || 'Unknown error'
+                        details: result.error || 'Unknown error',
+                        time: new Date().toLocaleTimeString(),
+                        errorMessage: result.error || 'Unknown error'
                     });
 
                     updateTimelineItem(currentIndex, 'error', 
-                        `✗ Error: ${result.message || 'Unknown error'}`, 
+                        `✗ Error: ${result.error || 'Unknown error'}`, 
                         `Failed after ${duration}s`);
 
-                    addLog(`✗ ${tableName}: ${result.message || 'Unknown error'}`, 'error');
-                    addResultRow(currentIndex + 1, tableName, 'Failed', 0, duration);
+                    addLog(`✗ ${migration.display}: ${result.error || 'Unknown error'}`, 'error');
+                    addResultRow(currentIndex + 1, migration.display, 'Failed', 0, duration);
                 }
             } catch (error) {
                 const endMigTime = new Date();
                 const duration = ((endMigTime - startMigTime) / 1000).toFixed(2);
 
                 migrationResults.push({
-                    table: tableName,
+                    table: migration.display,
+                    apiName: migration.api,
                     status: 'error',
                     records: 0,
                     duration: duration,
-                    skippedRecords: 0,
-                    skipReason: 'N/A',
+                    details: error.message,
+                    time: new Date().toLocaleTimeString(),
                     errorMessage: error.message
                 });
 
@@ -822,9 +972,12 @@
                     `✗ Error: ${error.message}`, 
                     `Failed after ${duration}s`);
 
-                addLog(`✗ ${tableName}: ${error.message}`, 'error');
-                addResultRow(currentIndex + 1, tableName, 'Failed', 0, duration);
+                addLog(`✗ ${migration.display}: ${error.message}`, 'error');
+                addResultRow(currentIndex + 1, migration.display, 'Failed', 0, duration);
             }
+
+            // Save state after each migration
+            saveMigrationState();
 
             // Update statistics
             updateStatistics();
@@ -837,6 +990,12 @@
             } else if (currentIndex >= migrations.length) {
                 completeMigration();
             }
+        }
+
+        // Helper function to extract record count from message
+        function extractRecordCount(message) {
+            const match = message.match(/(\d+)\s+records?\s+migrated/i);
+            return match ? parseInt(match[1]) : 0;
         }
 
         // Update timeline item
@@ -930,6 +1089,9 @@
             document.getElementById('btnPause').disabled = true;
             document.getElementById('btnStop').disabled = true;
             document.getElementById('statusBadge').textContent = 'Completed';
+            
+            // Save final state
+            saveMigrationState();
             
             const completed = migrationResults.filter(r => r.status === 'success').length;
             const failed = migrationResults.filter(r => r.status === 'error').length;
@@ -1039,12 +1201,139 @@
             addLog('Excel report downloaded successfully!', 'success');
         }
 
+        // Run Seed Data
+        async function runSeedData() {
+            if (!confirm('Are you sure you want to run seed data migrations? This will insert seed data into the PostgreSQL database.')) {
+                return;
+            }
+
+            document.getElementById('btnSeedData').disabled = true;
+            addLog('Starting seed data migration...', 'info');
+
+            try {
+                const response = await fetch('/Migration/RunSeedData', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    addLog(`✓ Seed data migration completed successfully!`, 'success');
+                    addLog(`  ${result.message}`, 'info');
+                } else {
+                    addLog(`✗ Seed data migration failed: ${result.message || result.error}`, 'error');
+                }
+            } catch (error) {
+                addLog(`✗ Error running seed data: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('btnSeedData').disabled = false;
+            }
+        }
+
+        // Truncate Database
+        async function truncateDatabase() {
+            const confirmText = prompt(
+                'WARNING: This will DELETE ALL DATA from all tables except migration tables!\n\n' +
+                'Type "TRUNCATE" (in capital letters) to confirm:'
+            );
+
+            if (confirmText !== 'TRUNCATE') {
+                if (confirmText !== null) {
+                    addLog('Truncate operation cancelled - incorrect confirmation text', 'warning');
+                }
+                return;
+            }
+
+            document.getElementById('btnTruncate').disabled = true;
+            addLog('Starting database truncation...', 'warning');
+
+            try {
+                const response = await fetch('/Migration/TruncateAllTables', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    addLog(`✓ Database truncation completed successfully!`, 'success');
+                    addLog(`  ${result.message}`, 'info');
+                    if (result.tablesTruncated) {
+                        addLog(`  Tables truncated: ${result.tablesTruncated}`, 'info');
+                    }
+                } else {
+                    addLog(`✗ Database truncation failed: ${result.message || result.error}`, 'error');
+                }
+            } catch (error) {
+                addLog(`✗ Error truncating database: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('btnTruncate').disabled = false;
+            }
+        }
+
+        // Reset Migration
+        function resetMigration() {
+            if (!confirm('Are you sure you want to reset the migration? This will clear all progress and start fresh.')) {
+                return;
+            }
+
+            // Reset all variables
+            currentIndex = 0;
+            isPaused = false;
+            isStopped = false;
+            startTime = null;
+            migrationResults = [];
+
+            // Clear storage
+            clearMigrationState();
+
+            // Reset UI
+            document.getElementById('btnStart').disabled = false;
+            document.getElementById('btnPause').disabled = true;
+            document.getElementById('btnStop').disabled = true;
+            document.getElementById('btnDownload').disabled = true;
+            document.getElementById('statusBadge').textContent = 'Ready';
+            document.getElementById('startTime').textContent = '-';
+            document.getElementById('endTime').textContent = '-';
+            document.getElementById('duration').textContent = '-';
+            document.getElementById('avgSpeed').textContent = '-';
+            document.getElementById('totalRecords').textContent = '0';
+
+            // Reinitialize timeline
+            initializeTimeline();
+
+            // Reset statistics
+            document.getElementById('completedCount').textContent = '0';
+            document.getElementById('failedCount').textContent = '0';
+            document.getElementById('pendingCount').textContent = migrations.length;
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('progressBar').textContent = '0%';
+
+            // Clear results table
+            document.getElementById('resultsTable').innerHTML = '';
+
+            // Clear log
+            document.getElementById('liveLog').innerHTML = '';
+
+            addLog('Migration reset successfully. Ready to start fresh.', 'success');
+        }
+
         // Initialize on page load
         window.onload = function() {
             initializeTimeline();
             initializeSignalR();
+            loadMigrationState(); // Load saved state from localStorage
             addLog('Sequential Migration Executor initialized', 'success');
             addLog(`${migrations.length} tables queued for migration`, 'info');
+            
+            if (migrationResults.length > 0) {
+                addLog(`Restored ${migrationResults.length} completed migrations from previous session`, 'info');
+            }
         };
     </script>
 </body>

@@ -1138,15 +1138,15 @@ public class MigrationController : Controller
             }
             else if (request.Table.ToLower() == "nfaheader")
             {
-                recordCount = await _nfaHeaderMigration.MigrateAsync(useTransaction: false);
+                recordCount = await _nfaHeaderMigration.MigrateAsync();
             }
             else if (request.Table.ToLower() == "nfaline")
             {
-                recordCount = await _nfaLineMigration.MigrateAsync(useTransaction: false);
+                recordCount = await _nfaLineMigration.MigrateAsync();
             }
             else if (request.Table.ToLower() == "nfalotcharges")
             {
-                recordCount = await _nfaLotChargesMigration.MigrateAsync(useTransaction: false);
+                recordCount = await _nfaLotChargesMigration.MigrateAsync();
             }
             else if (request.Table.ToLower() == "usercompanymaster")
             {
@@ -2263,6 +2263,57 @@ public class MigrationController : Controller
         {
             _logger.LogError(ex, "Error occurred during nfa_workflow migration.");
             return StatusCode(500, new { Error = "An error occurred during migration." });
+        }
+    }
+
+    [HttpPost("RunSeedData")]
+    public async Task<IActionResult> RunSeedData()
+    {
+        try
+        {
+            var loggerFactory = HttpContext.RequestServices.GetService(typeof(ILoggerFactory)) as ILoggerFactory;
+            var seedLogger = loggerFactory?.CreateLogger<DataMigration.Services.SeedDataService>();
+            var seedService = new DataMigration.Services.SeedDataService(_configuration, seedLogger!);
+            var result = await seedService.RunSeedDataAsync();
+
+            return Json(new
+            {
+                success = result.Success,
+                message = result.Message,
+                recordsInserted = result.RecordsInserted,
+                tablesSeeded = result.TablesSeeded
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during seed data migration.");
+            return Json(new { success = false, message = ex.Message });
+        }
+    }
+
+    [HttpPost("TruncateAllTables")]
+    public async Task<IActionResult> TruncateAllTables()
+    {
+        try
+        {
+            var loggerFactory = HttpContext.RequestServices.GetService(typeof(ILoggerFactory)) as ILoggerFactory;
+            var truncateLogger = loggerFactory?.CreateLogger<DataMigration.Services.DatabaseTruncateService>();
+            var truncateService = new DataMigration.Services.DatabaseTruncateService(_configuration, truncateLogger!);
+            var result = await truncateService.TruncateAllTablesAsync();
+
+            return Json(new
+            {
+                success = result.Success,
+                message = result.Message,
+                tablesTruncated = result.TablesTruncated,
+                totalTables = result.TotalTables,
+                errors = result.Errors.Take(10).ToList()
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during database truncation.");
+            return Json(new { success = false, message = ex.Message });
         }
     }
 }
