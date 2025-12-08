@@ -5,6 +5,7 @@ using Microsoft.Data.SqlClient;
 using Npgsql;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using DataMigration.Services;
 
 public class ErpPrLinesMigration : MigrationService
 {
@@ -39,7 +40,7 @@ SELECT
     t.MaterialPODescription AS material_po_description,
     t.AMOUNT AS amount,
     t.UNIT_PRICE AS unit_price,
-    t.RemQty AS rem_qty,
+    ISNULL(t.RemQty, 0) AS rem_qty,
     t.QUANTITY AS qty,
     t.PONo AS po_number,
     t.PODate AS po_creation_date,
@@ -198,6 +199,80 @@ INSERT INTO erp_pr_lines (
         "Direct", // deleted_by
         "Direct"  // deleted_date
     };
+
+    public override List<object> GetMappings()
+    {
+        return new List<object>
+        {
+            new { source = "PRTRANSID", logic = "Direct", target = "erp_pr_lines_id" },
+            new { source = "pm.IsNumberGeneration", logic = "Direct", target = "temp_pr" },
+            new { source = "t.BUYERID", logic = "Conditional", target = "user_id" },
+            new { source = "u.FULL_NAME", logic = "Direct", target = "user_full_name" },
+            new { source = "t.PRStatus", logic = "Direct", target = "pr_status" },
+            new { source = "pm.PR_NUM", logic = "Direct", target = "pr_number" },
+            new { source = "t.PR_LINE", logic = "Direct", target = "pr_line" },
+            new { source = "pm.DESCRIPTION", logic = "Direct", target = "header_text" },
+            new { source = "t.ClientSAPId", logic = "Direct", target = "company_id" },
+            new { source = "t.ClientSAPCode", logic = "Direct", target = "company_code" },
+            new { source = "t.UOMId", logic = "Direct", target = "uom_id" },
+            new { source = "t.UOMCODE", logic = "Direct", target = "uom_code" },
+            new { source = "t.Plant", logic = "Direct", target = "plant_id" },
+            new { source = "t.PlantCode", logic = "Direct", target = "plant_code" },
+            new { source = "t.MaterialGroupId", logic = "Direct", target = "material_group_id" },
+            new { source = "t.MaterialGroup", logic = "Direct", target = "material_group_code" },
+            new { source = "t.PurchasingGroup", logic = "Direct", target = "purchase_group_id" },
+            new { source = "t.PurchaseGroupCode", logic = "Direct", target = "purchase_group_code" },
+            new { source = "t.ItemCode", logic = "Direct", target = "material_code" },
+            new { source = "t.ItemName", logic = "Direct", target = "material_short_text" },
+            new { source = "t.ITEM_DESCRIPTION", logic = "Direct", target = "material_item_text" },
+            new { source = "CASE WHEN ItemCode", logic = "Conditional", target = "item_type" },
+            new { source = "t.MaterialPODescription", logic = "Direct", target = "material_po_description" },
+            new { source = "t.AMOUNT", logic = "Direct", target = "amount" },
+            new { source = "t.UNIT_PRICE", logic = "Direct", target = "unit_price" },
+            new { source = "t.RemQty", logic = "Direct", target = "rem_qty" },
+            new { source = "t.QUANTITY", logic = "Direct", target = "qty" },
+            new { source = "t.PONo", logic = "Direct", target = "po_number" },
+            new { source = "t.PODate", logic = "Direct", target = "po_creation_date" },
+            new { source = "t.POQty", logic = "Direct", target = "po_qty" },
+            new { source = "t.POVendorCode", logic = "Direct", target = "po_vendor_code" },
+            new { source = "t.POVendorName", logic = "Direct", target = "po_vendor_name" },
+            new { source = "t.POTotalGrossAmount", logic = "Direct", target = "po_item_value" },
+            new { source = "t.LastPONo", logic = "Direct", target = "lpo_number" },
+            new { source = "t.POItemNo", logic = "Direct", target = "lpo_line_number" },
+            new { source = "t.PODocType", logic = "Direct", target = "lpo_doc_type" },
+            new { source = "t.LastPODate", logic = "Direct", target = "lpo_creation_date" },
+            new { source = "t.POUom", logic = "Direct", target = "lpo_uom" },
+            new { source = "t.POUnitPrice", logic = "Direct", target = "lpo_unit_price" },
+            new { source = "t.POItemCurrency", logic = "Direct", target = "lpo_line_currency" },
+            new { source = "t.VendorCode", logic = "Direct", target = "lpo_vendor_code" },
+            new { source = "t.VendorName", logic = "Direct", target = "lpo_vendor_name" },
+            new { source = "t.LastPODate", logic = "Direct", target = "lpo_date" },
+            new { source = "t.LastPOQty", logic = "Direct", target = "lpo_qty" },
+            new { source = "t.TotalStock", logic = "Direct", target = "total_stock" },
+            new { source = "t.CostCenter", logic = "Direct", target = "cost_center" },
+            new { source = "t.StoreLocation", logic = "Direct", target = "store_location" },
+            new { source = "t.Department", logic = "Direct", target = "department" },
+            new { source = "t.AcctAssignmentCat", logic = "Direct", target = "acct_assignment_cat" },
+            new { source = "t.AcctAssignmentCatDesc", logic = "Direct", target = "acct_assignment_cat_desc" },
+            new { source = "t.PROJECT_ID", logic = "Direct", target = "wbs_element_code" },
+            new { source = "NULL", logic = "Default", target = "wbs_element_name" },
+            new { source = "t.CurrencyCode", logic = "Direct", target = "currency_code" },
+            new { source = "t.TrackingNumber", logic = "Direct", target = "tracking_number" },
+            new { source = "pm.CreatedBy", logic = "Direct", target = "erp_created_by" },
+            new { source = "pm.RequestBy", logic = "Direct", target = "erp_request_by" },
+            new { source = "t.RequestDate", logic = "Direct", target = "erp_change_on_date" },
+            new { source = "t.DeliveryDate", logic = "Direct", target = "delivery_date" },
+            new { source = "t.IsClosed", logic = "Conditional", target = "is_closed" },
+            new { source = "t.itemBlocked", logic = "Conditional", target = "item_block" },
+            new { source = "-", logic = "Default: 0", target = "created_by" },
+            new { source = "-", logic = "Default: NULL", target = "created_date" },
+            new { source = "-", logic = "Default: 0", target = "modified_by" },
+            new { source = "-", logic = "Default: NULL", target = "modified_date" },
+            new { source = "t.DeletionIndicator", logic = "Conditional", target = "is_deleted" },
+            new { source = "-", logic = "Default: NULL", target = "deleted_by" },
+            new { source = "-", logic = "Default: NULL", target = "deleted_date" }
+        };
+    }
 
     public async Task<int> MigrateAsync()
     {

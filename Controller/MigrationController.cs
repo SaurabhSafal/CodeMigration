@@ -565,6 +565,16 @@ public class MigrationController : Controller
             var mappings = _supplierPaymentIncotermMigration.GetMappings();
             return Json(mappings);
         }
+        else if (table.ToLower() == "podoctype")
+        {
+            var mappings = _poDocTypeMigration.GetMappings();
+            return Json(mappings);
+        }
+        else if (table.ToLower() == "pocondition")
+        {
+            var mappings = _poConditionMigration.GetMappings();
+            return Json(mappings);
+        }
         else if (table.ToLower() == "arcsub")
         {
             var mappings = _arcSubMigration.GetMappings();
@@ -1039,6 +1049,14 @@ public class MigrationController : Controller
             else if (request.Table.ToLower() == "supplierpaymentincoterm")
             {
                 recordCount = await _supplierPaymentIncotermMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "podoctype")
+            {
+                recordCount = await _poDocTypeMigration.MigrateAsync();
+            }
+            else if (request.Table.ToLower() == "pocondition")
+            {
+                recordCount = await _poConditionMigration.MigrateAsync();
             }
             else if (request.Table.ToLower() == "arcsub")
             {

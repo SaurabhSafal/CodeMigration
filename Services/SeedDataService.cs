@@ -34,6 +34,10 @@ namespace DataMigration.Services
                 int totalRecordsInserted = 0;
                 var seedTables = new List<string>();
 
+                // Truncate tables first (in reverse order of dependencies)
+                _logger.LogInformation("Truncating seed tables before inserting data...");
+                await TruncateSeedTablesAsync(pgConn);
+
                 // Seed tables in the correct order (respecting foreign key dependencies)
                 totalRecordsInserted += await SeedRolesAsync(pgConn, seedTables);
                 totalRecordsInserted += await SeedPermissionGroupsAsync(pgConn, seedTables);
@@ -52,6 +56,40 @@ namespace DataMigration.Services
             {
                 _logger.LogError(ex, "Error occurred during seed data migration.");
                 return (false, ex.Message, 0, new List<string>());
+            }
+        }
+
+        private async Task TruncateSeedTablesAsync(NpgsqlConnection pgConn)
+        {
+            try
+            {
+                // Truncate only country_master and company_master tables
+                var tablesToTruncate = new[]
+                {
+                    "country_master",
+                    "company_master"
+                };
+
+                foreach (var table in tablesToTruncate)
+                {
+                    try
+                    {
+                        var truncateQuery = $"TRUNCATE TABLE {table} CASCADE";
+                        using var truncateCmd = new NpgsqlCommand(truncateQuery, pgConn);
+                        await truncateCmd.ExecuteNonQueryAsync();
+                        _logger.LogInformation($"Truncated table: {table}");
+                    }
+                    catch (Exception ex)
+                    {
+                        // Table might not exist, log and continue
+                        _logger.LogWarning($"Could not truncate {table}: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error truncating tables");
+                throw;
             }
         }
 

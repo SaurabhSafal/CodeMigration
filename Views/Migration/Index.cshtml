@@ -724,10 +724,20 @@
                                 '<i class="fas fa-trash-alt"></i> Truncate Table' +
                             '</button>' +
                         '</div>' +
-                        '<button class="btn-migrate" id="migrate' + table + 'Btn" onclick="startMigration(\'' + table + '\')">' +
-                            '<i class="fas fa-play"></i>' +
-                            '<span>Start Migration</span>' +
-                        '</button>' +
+                        '<div class="d-flex gap-2 mt-3">' +
+                            '<button class="btn-migrate flex-fill" id="migrate' + table + 'Btn" onclick="startMigration(\'' + table + '\')">' +
+                                '<i class="fas fa-play"></i>' +
+                                '<span>Start Migration</span>' +
+                            '</button>' +
+                            '<button class="btn btn-warning" id="stop' + table + 'Btn" onclick="stopMigration(\'' + table + '\')" style="display: none; padding: 12px 24px; border-radius: 10px; font-weight: 600;">' +
+                                '<i class="fas fa-stop"></i>' +
+                                '<span>Stop</span>' +
+                            '</button>' +
+                            '<button class="btn btn-secondary" id="reset' + table + 'Btn" onclick="resetMigration(\'' + table + '\')" style="padding: 12px 24px; border-radius: 10px; font-weight: 600;">' +
+                                '<i class="fas fa-redo-alt"></i>' +
+                                '<span>Reset</span>' +
+                            '</button>' +
+                        '</div>' +
                     '</div>' +
                 '</div>';
         }
@@ -735,6 +745,8 @@
         function startMigration(type) {
             console.log('Starting migration for ' + type);
             const btn = document.getElementById('migrate' + type + 'Btn');
+            const stopBtn = document.getElementById('stop' + type + 'Btn');
+            const resetBtn = document.getElementById('reset' + type + 'Btn');
             const progress = document.getElementById(type + 'Progress');
             const progressText = document.getElementById(type + 'ProgressText');
             const status = document.getElementById(type + 'Status');
@@ -745,9 +757,14 @@
             status.className = 'status-badge status-progress';
             status.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i><span>In Progress</span>';
             
-            // Update button
+            // Update buttons
             btn.disabled = true;
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Migrating...</span>';
+            stopBtn.style.display = 'inline-block';
+            resetBtn.disabled = true;
+            
+            // Store abort controller for this migration
+            window['migrationController_' + type] = new AbortController();
             
             // Update progress
             progress.style.width = '50%';
@@ -758,7 +775,8 @@
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ table: type })
+                body: JSON.stringify({ table: type }),
+                signal: window['migrationController_' + type].signal
             })
             .then(response => {
                 console.log('MigrateAsync response status:', response.status);
@@ -787,18 +805,86 @@
             })
             .catch(error => {
                 console.error('Error during migration:', error);
-                progress.style.width = '100%';
-                progressText.textContent = '100%';
-                status.className = 'status-badge status-failed';
-                status.innerHTML = '<i class="fas fa-exclamation-triangle"></i><span>Error</span>';
-                message.className = 'alert alert-danger';
-                message.innerHTML = '<strong><i class="fas fa-exclamation-triangle"></i> Network Error:</strong> ' + error.message;
-                message.classList.remove('d-none');
+                
+                // Check if it was aborted
+                if (error.name === 'AbortError') {
+                    status.className = 'status-badge status-failed';
+                    status.innerHTML = '<i class="fas fa-hand-paper"></i><span>Stopped by User</span>';
+                    message.className = 'alert alert-warning';
+                    message.innerHTML = '<strong><i class="fas fa-hand-paper"></i> Stopped:</strong> Migration was stopped by user. Progress may be incomplete.';
+                    message.classList.remove('d-none');
+                } else {
+                    progress.style.width = '100%';
+                    progressText.textContent = '100%';
+                    status.className = 'status-badge status-failed';
+                    status.innerHTML = '<i class="fas fa-exclamation-triangle"></i><span>Error</span>';
+                    message.className = 'alert alert-danger';
+                    message.innerHTML = '<strong><i class="fas fa-exclamation-triangle"></i> Network Error:</strong> ' + error.message;
+                    message.classList.remove('d-none');
+                }
             })
             .finally(() => {
                 btn.disabled = false;
                 btn.innerHTML = '<i class="fas fa-redo"></i><span>Migrate Again</span>';
+                stopBtn.style.display = 'none';
+                resetBtn.disabled = false;
+                delete window['migrationController_' + type];
             });
+        }
+
+        function stopMigration(type) {
+            console.log('Stopping migration for ' + type);
+            
+            if (!confirm('Are you sure you want to stop the migration?\n\nNote: The migration will stop at the next safe point, but already processed records will remain in the database.')) {
+                return;
+            }
+            
+            const controller = window['migrationController_' + type];
+            if (controller) {
+                controller.abort();
+                
+                const message = document.getElementById(type + 'Message');
+                message.className = 'alert alert-info';
+                message.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Stopping migration...';
+                message.classList.remove('d-none');
+            } else {
+                alert('No active migration found to stop.');
+            }
+        }
+
+        function resetMigration(type) {
+            console.log('Resetting migration for ' + type);
+            
+            const btn = document.getElementById('migrate' + type + 'Btn');
+            const stopBtn = document.getElementById('stop' + type + 'Btn');
+            const progress = document.getElementById(type + 'Progress');
+            const progressText = document.getElementById(type + 'ProgressText');
+            const status = document.getElementById(type + 'Status');
+            const message = document.getElementById(type + 'Message');
+            
+            // Reset progress
+            progress.style.width = '0%';
+            progressText.textContent = '0%';
+            
+            // Reset status
+            status.style.display = 'inline-flex';
+            status.className = 'status-badge status-pending';
+            status.innerHTML = '<i class="fas fa-circle"></i><span>Ready to Migrate</span>';
+            
+            // Hide message
+            message.classList.add('d-none');
+            message.className = 'alert';
+            message.innerHTML = '';
+            
+            // Reset button
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-play"></i><span>Start Migration</span>';
+            stopBtn.style.display = 'none';
+            
+            // Clear any abort controller
+            delete window['migrationController_' + type];
+            
+            console.log('Migration reset complete for ' + type);
         }
 
         function testConnections(table) {

@@ -8,8 +8,8 @@ using Npgsql;
 public class CurrencyMasterMigration : MigrationService
 {
     protected override string SelectQuery => "SELECT CurrencyMastID, Currency_Code, Currency_Name FROM TBL_CURRENCYMASTER";
-    protected override string InsertQuery => @"INSERT INTO currency_master (currency_id, company_id, currency_code, currency_name, currency_short_name, decimal_places, iso_code, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) 
-                                             VALUES (@currency_id, @company_id, @currency_code, @currency_name, @currency_short_name, @decimal_places, @iso_code, @created_by, @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date)";
+    protected override string InsertQuery => @"INSERT INTO currency_master (company_id, currency_code, currency_name, currency_short_name, decimal_places, iso_code, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) 
+                                             VALUES (@company_id, @currency_code, @currency_name, @currency_short_name, @decimal_places, @iso_code, @created_by, @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date)";
 
     public CurrencyMasterMigration(IConfiguration configuration) : base(configuration) { }
 
@@ -17,8 +17,8 @@ public class CurrencyMasterMigration : MigrationService
     {
         return new List<string> 
         { 
-            "Direct",           // currency_id
-            "Default: 1",       // company_id
+            "Auto-generated",   // currency_id (SERIAL)
+            "From company_master", // company_id
             "Direct",           // currency_code
             "Direct",           // currency_name
             "Default: null",    // currency_short_name
@@ -43,7 +43,7 @@ public class CurrencyMasterMigration : MigrationService
     {
         // Load all company IDs from company_master so we can insert the same currency rows for each company
         var companyIds = new List<int>();
-        using (var compCmd = new NpgsqlCommand("SELECT company_id FROM company_master", pgConn))
+        using (var compCmd = new NpgsqlCommand("SELECT company_id FROM company_master", pgConn, transaction))
         {
             using var compReader = await compCmd.ExecuteReaderAsync();
             while (await compReader.ReadAsync())
@@ -52,26 +52,36 @@ public class CurrencyMasterMigration : MigrationService
             }
         }
 
+        if (companyIds.Count == 0)
+        {
+            Console.WriteLine("⚠️  WARNING: No companies found in company_master. Please migrate companies first!");
+            return 0;
+        }
+
+        Console.WriteLine($"✓ Found {companyIds.Count} companies. Will insert currencies for each company.");
+
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await sqlCmd.ExecuteReaderAsync();
 
-        using var pgCmd = new NpgsqlCommand(InsertQuery, pgConn);
-        if (transaction != null)
-        {
-            pgCmd.Transaction = transaction;
-        }
+        using var pgCmd = new NpgsqlCommand(InsertQuery, pgConn, transaction);
 
         int insertedCount = 0;
+        int skippedCount = 0;
+        int currencyCount = 0;
+
         while (await reader.ReadAsync())
         {
+            currencyCount++;
+            var currencyCode = reader["Currency_Code"]?.ToString();
+            var currencyName = reader["Currency_Name"]?.ToString();
+
             // For each source currency row, insert one row per company
             foreach (var companyId in companyIds)
             {
                 pgCmd.Parameters.Clear();
-                pgCmd.Parameters.AddWithValue("@currency_id", reader["CurrencyMastID"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@company_id", companyId);
-                pgCmd.Parameters.AddWithValue("@currency_code", reader["Currency_Code"] ?? DBNull.Value);
-                pgCmd.Parameters.AddWithValue("@currency_name", reader["Currency_Name"] ?? DBNull.Value);
+                pgCmd.Parameters.AddWithValue("@currency_code", currencyCode ?? (object)DBNull.Value);
+                pgCmd.Parameters.AddWithValue("@currency_name", currencyName ?? (object)DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@currency_short_name", DBNull.Value); // Default: null
                 pgCmd.Parameters.AddWithValue("@decimal_places", 2); // Default: 2
                 pgCmd.Parameters.AddWithValue("@iso_code", DBNull.Value); // Default: null
@@ -88,14 +98,31 @@ public class CurrencyMasterMigration : MigrationService
                     int result = await pgCmd.ExecuteNonQueryAsync();
                     if (result > 0) insertedCount++;
                 }
-                catch (PostgresException pgEx)
+                catch (Exception ex)
                 {
-                    // Log and continue on Postgres constraint errors or duplicates
-                    Console.WriteLine($"Warning: failed to insert currency {reader["CurrencyMastID"]} for company {companyId}: {pgEx.Message}");
-                    continue;
+                    skippedCount++;
+                    Console.WriteLine($"⚠️  Warning: Failed to insert currency '{currencyCode}' for company {companyId}: {ex.Message}");
+                    
+                    // If we're in a transaction and it's aborted, we need to stop
+                    if (transaction != null && ex.Message.Contains("current transaction is aborted"))
+                    {
+                        Console.WriteLine("❌ Transaction aborted. Rolling back all changes.");
+                        throw; // Re-throw to trigger rollback
+                    }
                 }
             }
+
+            if (currencyCount % 10 == 0)
+            {
+                Console.WriteLine($"📊 Processed {currencyCount} currencies... (Inserted: {insertedCount}, Skipped: {skippedCount})");
+            }
         }
+
+        Console.WriteLine($"\n📊 Currency Migration Summary:");
+        Console.WriteLine($"   Source currencies: {currencyCount}");
+        Console.WriteLine($"   Companies: {companyIds.Count}");
+        Console.WriteLine($"   ✓ Successfully inserted: {insertedCount}");
+        Console.WriteLine($"   ⚠️  Skipped (duplicates/errors): {skippedCount}");
 
         return insertedCount;
     }

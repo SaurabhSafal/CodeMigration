@@ -19,12 +19,19 @@ namespace DataMigration.Services
         {
             return new List<object>
             {
-                new { source = "RecId", target = "erp_currency_exchange_rate_id", type = "int -> integer" },
-                new { source = "FromCurrency", target = "from_currency", type = "varchar -> character varying(10)" },
-                new { source = "ToCurrency", target = "to_currency", type = "varchar -> character varying(10)" },
-                new { source = "ExchangeRate", target = "exchange_rate", type = "decimal -> numeric" },
-                new { source = "FromDate", target = "valid_from", type = "datetime -> timestamp" },
-                new { source = "N/A", target = "company_id", type = "FK -> integer (default first company_id)" }
+                new { source = "RecId", target = "erp_currency_exchange_rate_id", logic = "RecId -> erp_currency_exchange_rate_id (Direct)", type = "int -> integer (NOT NULL)" },
+                new { source = "FromCurrency", target = "from_currency", logic = "FromCurrency -> from_currency (Direct, default 'USD' if NULL)", type = "varchar -> character varying(10) (NOT NULL)" },
+                new { source = "ToCurrency", target = "to_currency", logic = "ToCurrency -> to_currency (Direct, default 'INR' if NULL)", type = "varchar -> character varying(10) (NOT NULL)" },
+                new { source = "ExchangeRate", target = "exchange_rate", logic = "ExchangeRate -> exchange_rate (Direct, default 1.0 if NULL)", type = "decimal -> numeric (NOT NULL)" },
+                new { source = "FromDate", target = "valid_from", logic = "FromDate -> valid_from (Direct, default NOW() if NULL)", type = "datetime -> timestamp with time zone (NOT NULL)" },
+                new { source = "N/A (Generated)", target = "company_id", logic = "Auto-inserted for each company in company_master", type = "FK -> integer (NOT NULL)" },
+                new { source = "N/A", target = "created_by", logic = "Default: NULL", type = "integer (NULLABLE)" },
+                new { source = "N/A", target = "created_date", logic = "Default: CURRENT_TIMESTAMP", type = "timestamp with time zone (NULLABLE)" },
+                new { source = "N/A", target = "modified_by", logic = "Default: NULL", type = "integer (NULLABLE)" },
+                new { source = "N/A", target = "modified_date", logic = "Default: NULL", type = "timestamp with time zone (NULLABLE)" },
+                new { source = "N/A", target = "is_deleted", logic = "Default: false", type = "boolean (NULLABLE)" },
+                new { source = "N/A", target = "deleted_by", logic = "Default: NULL", type = "integer (NULLABLE)" },
+                new { source = "N/A", target = "deleted_date", logic = "Default: NULL", type = "timestamp with time zone (NULLABLE)" }
             };
         }
 
@@ -97,26 +104,75 @@ namespace DataMigration.Services
 
                 _logger.LogInformation($"Found {sourceData.Count} records in source table");
 
+                if (sourceData.Count == 0)
+                {
+                    _logger.LogWarning("No data found in TBL_CurrencyConversionMaster");
+                    return 0;
+                }
+
+                // Generate unique IDs for each company combination
+                int recordCounter = 1;
+                int processedRecords = 0;
+
+                _logger.LogInformation($"Starting migration: {sourceData.Count} records × {validCompanyIds.Count} companies = {sourceData.Count * validCompanyIds.Count} total inserts");
+
                 foreach (var record in sourceData)
                 {
+                    processedRecords++;
+                    
+                    // Log progress every 100 records
+                    if (processedRecords % 100 == 0)
+                    {
+                        _logger.LogInformation($"Progress: {processedRecords}/{sourceData.Count} records processed");
+                    }
+                    
+                    // Handle NULL values with proper defaults (all target columns are NOT NULL)
                     var fromCurrency = GetStringValue(record.FromCurrency, 10);
+                    if (string.IsNullOrWhiteSpace(fromCurrency))
+                    {
+                        fromCurrency = "USD"; // Default currency
+                        _logger.LogWarning($"RecId {record.RecId}: FromCurrency is NULL, using default 'USD'");
+                    }
+
                     var toCurrency = GetStringValue(record.ToCurrency, 10);
+                    if (string.IsNullOrWhiteSpace(toCurrency))
+                    {
+                        toCurrency = "INR"; // Default currency
+                        _logger.LogWarning($"RecId {record.RecId}: ToCurrency is NULL, using default 'INR'");
+                    }
+
                     var validFrom = GetDateTimeValue(record.FromDate) ?? DateTime.UtcNow;
                     var exchangeRate = record.ExchangeRate ?? 1.0m;
 
-                    // Insert for each company
+                    if (exchangeRate == 0)
+                    {
+                        exchangeRate = 1.0m; // Avoid zero exchange rate
+                        _logger.LogWarning($"RecId {record.RecId}: ExchangeRate is 0, using default 1.0");
+                    }
+
+                    // Insert for each company with unique IDs
                     foreach (var companyId in validCompanyIds)
                     {
                         try
                         {
-                            // Check if record already exists for this company
+                            // Generate unique ID for each company combination
+                            int uniqueId = recordCounter++;
+
+                            // Check if record already exists
                             int? existingRecordId = null;
                             using (var checkCmd = new NpgsqlCommand(
-                                "SELECT erp_currency_exchange_rate_id FROM erp_currency_exchange_rate WHERE erp_currency_exchange_rate_id = @Id AND company_id = @CompanyId",
+                                @"SELECT erp_currency_exchange_rate_id 
+                                  FROM erp_currency_exchange_rate 
+                                  WHERE from_currency = @FromCurrency 
+                                    AND to_currency = @ToCurrency 
+                                    AND company_id = @CompanyId
+                                    AND valid_from = @ValidFrom",
                                 pgConnection))
                             {
-                                checkCmd.Parameters.AddWithValue("@Id", record.RecId);
+                                checkCmd.Parameters.AddWithValue("@FromCurrency", fromCurrency);
+                                checkCmd.Parameters.AddWithValue("@ToCurrency", toCurrency);
                                 checkCmd.Parameters.AddWithValue("@CompanyId", companyId);
+                                checkCmd.Parameters.AddWithValue("@ValidFrom", validFrom);
                                 var result = await checkCmd.ExecuteScalarAsync();
                                 if (result != null && result != DBNull.Value)
                                 {
@@ -129,28 +185,21 @@ namespace DataMigration.Services
                                 // Update existing record
                                 using var updateCmd = new NpgsqlCommand(
                                     @"UPDATE erp_currency_exchange_rate SET
-                                        from_currency = @FromCurrency,
-                                        to_currency = @ToCurrency,
-                                        valid_from = @ValidFrom,
                                         exchange_rate = @ExchangeRate,
                                         modified_by = NULL,
                                         modified_date = CURRENT_TIMESTAMP
-                                    WHERE erp_currency_exchange_rate_id = @Id AND company_id = @CompanyId",
+                                    WHERE erp_currency_exchange_rate_id = @Id",
                                     pgConnection);
 
-                                updateCmd.Parameters.AddWithValue("@Id", record.RecId);
-                                updateCmd.Parameters.AddWithValue("@FromCurrency", fromCurrency);
-                                updateCmd.Parameters.AddWithValue("@ToCurrency", toCurrency);
-                                updateCmd.Parameters.AddWithValue("@ValidFrom", validFrom);
+                                updateCmd.Parameters.AddWithValue("@Id", existingRecordId.Value);
                                 updateCmd.Parameters.AddWithValue("@ExchangeRate", exchangeRate);
-                                updateCmd.Parameters.AddWithValue("@CompanyId", companyId);
 
                                 await updateCmd.ExecuteNonQueryAsync();
-                                _logger.LogDebug($"Updated record with RecId: {record.RecId} for company: {companyId}");
+                                _logger.LogDebug($"Updated record ID: {existingRecordId.Value} for company: {companyId}");
                             }
                             else
                             {
-                                // Insert new record
+                                // Insert new record with unique ID
                                 using var insertCmd = new NpgsqlCommand(
                                     @"INSERT INTO erp_currency_exchange_rate (
                                         erp_currency_exchange_rate_id,
@@ -180,25 +229,28 @@ namespace DataMigration.Services
                                         false,
                                         NULL,
                                         NULL
-                                    )",
+                                    )
+                                    ON CONFLICT (erp_currency_exchange_rate_id) DO UPDATE SET
+                                        exchange_rate = EXCLUDED.exchange_rate,
+                                        modified_date = CURRENT_TIMESTAMP",
                                     pgConnection);
 
-                                insertCmd.Parameters.AddWithValue("@Id", record.RecId);
+                                insertCmd.Parameters.AddWithValue("@Id", uniqueId);
                                 insertCmd.Parameters.AddWithValue("@FromCurrency", fromCurrency);
                                 insertCmd.Parameters.AddWithValue("@ToCurrency", toCurrency);
                                 insertCmd.Parameters.AddWithValue("@ValidFrom", validFrom);
                                 insertCmd.Parameters.AddWithValue("@ExchangeRate", exchangeRate);
                                 insertCmd.Parameters.AddWithValue("@CompanyId", companyId);
 
-                                await insertCmd.ExecuteNonQueryAsync();
-                                _logger.LogDebug($"Inserted new record with RecId: {record.RecId} for company: {companyId}");
+                                int rowsAffected = await insertCmd.ExecuteNonQueryAsync();
+                                _logger.LogDebug($"Inserted record ID {uniqueId} for company {companyId}, RecId {record.RecId} (rows: {rowsAffected})");
                             }
 
                             migratedRecords++;
                         }
                         catch (PostgresException pgEx)
                         {
-                            var errorMsg = $"RecId {record.RecId}, Company {companyId}: {pgEx.Message}";
+                            var errorMsg = $"RecId {record.RecId}, Company {companyId}: PostgreSQL Error {pgEx.SqlState} - {pgEx.Message}";
                             _logger.LogWarning(errorMsg);
                             errors.Add(errorMsg);
                             skippedRecords++;
@@ -232,9 +284,10 @@ namespace DataMigration.Services
 
         private string GetStringValue(string? value, int maxLength)
         {
-            if (string.IsNullOrEmpty(value))
+            if (string.IsNullOrWhiteSpace(value))
                 return string.Empty;
 
+            value = value.Trim();
             return value.Length > maxLength ? value.Substring(0, maxLength) : value;
         }
 

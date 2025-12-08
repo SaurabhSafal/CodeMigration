@@ -20,7 +20,7 @@ public class SupplierPaymentIncotermMigration : MigrationService
             IncoTermRemark,
             ClientSAPId
         FROM TBL_VendorPOTerm
-        ORDER BY VendorPayIncoTermId";
+        ORDER BY VendorPOTermId";
 
     protected override string InsertQuery => @"
         INSERT INTO supplier_payment_incoterm (

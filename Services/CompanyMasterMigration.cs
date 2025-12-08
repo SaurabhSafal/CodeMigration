@@ -35,7 +35,6 @@ public class CompanyMasterMigration : MigrationService
             value_decimal_places,
             is_indian_currency,
             date_format,
-            time_format,
             rfq_prefix,
             rfq_length,
             auction_prefix,
@@ -51,14 +50,8 @@ public class CompanyMasterMigration : MigrationService
             nfa_prefix,
             nfano_length,
             po_months_validity,
-            site_url,
-            created_by,
-            created_date,
-            modified_by,
-            modified_date,
-            is_deleted,
-            deleted_by,
-            deleted_date
+            time_format,
+            site_url
         ) VALUES (
             @company_id,
             @company_code,
@@ -73,7 +66,6 @@ public class CompanyMasterMigration : MigrationService
             @value_decimal_places,
             @is_indian_currency,
             @date_format,
-            @time_format,
             @rfq_prefix,
             @rfq_length,
             @auction_prefix,
@@ -89,14 +81,8 @@ public class CompanyMasterMigration : MigrationService
             @nfa_prefix,
             @nfano_length,
             @po_months_validity,
-            @site_url,
-            @created_by,
-            @created_date,
-            @modified_by,
-            @modified_date,
-            @is_deleted,
-            @deleted_by,
-            @deleted_date
+            @time_format,
+            @site_url
         )";
 
     public CompanyMasterMigration(IConfiguration configuration) : base(configuration) { }
@@ -118,7 +104,6 @@ public class CompanyMasterMigration : MigrationService
             "value_decimal_places -> 2 (Fixed Default)",
             "is_indian_currency -> true (Fixed Default)",
             "date_format -> dd/MM/yyyy (Fixed Default)",
-            "time_format -> hh:mm tt (Fixed Default)",
             "rfq_prefix -> R (Fixed Default)",
             "rfq_length -> 4 (Fixed Default)",
             "auction_prefix -> A (Fixed Default)",
@@ -134,14 +119,8 @@ public class CompanyMasterMigration : MigrationService
             "nfa_prefix -> empty (Fixed Default)",
             "nfano_length -> 6 (Fixed Default)",
             "po_months_validity -> 12 (Fixed Default)",
-            "site_url -> empty (Fixed Default)",
-            "created_by -> NULL (Fixed)",
-            "created_date -> NULL (Fixed)",
-            "modified_by -> NULL (Fixed)",
-            "modified_date -> NULL (Fixed)",
-            "is_deleted -> false (Fixed)",
-            "deleted_by -> NULL (Fixed)",
-            "deleted_date -> NULL (Fixed)"
+            "time_format -> hh:mm tt (Fixed Default)",
+            "site_url -> empty (Fixed Default)"
         };
     }
 
@@ -162,7 +141,6 @@ public class CompanyMasterMigration : MigrationService
             new { source = "-", logic = "value_decimal_places -> 2 (Fixed Default)", target = "value_decimal_places" },
             new { source = "-", logic = "is_indian_currency -> true (Fixed Default)", target = "is_indian_currency" },
             new { source = "-", logic = "date_format -> dd/MM/yyyy (Fixed Default)", target = "date_format" },
-            new { source = "-", logic = "time_format -> hh:mm tt (Fixed Default)", target = "time_format" },
             new { source = "-", logic = "rfq_prefix -> R (Fixed Default)", target = "rfq_prefix" },
             new { source = "-", logic = "rfq_length -> 4 (Fixed Default)", target = "rfq_length" },
             new { source = "-", logic = "auction_prefix -> A (Fixed Default)", target = "auction_prefix" },
@@ -178,14 +156,8 @@ public class CompanyMasterMigration : MigrationService
             new { source = "-", logic = "nfa_prefix -> empty (Fixed Default)", target = "nfa_prefix" },
             new { source = "-", logic = "nfano_length -> 6 (Fixed Default)", target = "nfano_length" },
             new { source = "-", logic = "po_months_validity -> 12 (Fixed Default)", target = "po_months_validity" },
-            new { source = "-", logic = "site_url -> empty (Fixed Default)", target = "site_url" },
-            new { source = "-", logic = "created_by -> NULL (Fixed Default)", target = "created_by" },
-            new { source = "-", logic = "created_date -> NULL (Fixed Default)", target = "created_date" },
-            new { source = "-", logic = "modified_by -> NULL (Fixed Default)", target = "modified_by" },
-            new { source = "-", logic = "modified_date -> NULL (Fixed Default)", target = "modified_date" },
-            new { source = "-", logic = "is_deleted -> false (Fixed Default)", target = "is_deleted" },
-            new { source = "-", logic = "deleted_by -> NULL (Fixed Default)", target = "deleted_by" },
-            new { source = "-", logic = "deleted_date -> NULL (Fixed Default)", target = "deleted_date" }
+            new { source = "-", logic = "time_format -> hh:mm tt (Fixed Default)", target = "time_format" },
+            new { source = "-", logic = "site_url -> empty (Fixed Default)", target = "site_url" }
         };
     }
 
@@ -244,7 +216,6 @@ public class CompanyMasterMigration : MigrationService
                 pgCmd.Parameters.AddWithValue("@value_decimal_places", 2);
                 pgCmd.Parameters.AddWithValue("@is_indian_currency", true);
                 pgCmd.Parameters.AddWithValue("@date_format", "dd/MM/yyyy");
-                pgCmd.Parameters.AddWithValue("@time_format", "hh:mm tt");
                 pgCmd.Parameters.AddWithValue("@rfq_prefix", "R");
                 pgCmd.Parameters.AddWithValue("@rfq_length", 4);
                 pgCmd.Parameters.AddWithValue("@auction_prefix", "A");
@@ -260,14 +231,8 @@ public class CompanyMasterMigration : MigrationService
                 pgCmd.Parameters.AddWithValue("@nfa_prefix", "");
                 pgCmd.Parameters.AddWithValue("@nfano_length", 6);
                 pgCmd.Parameters.AddWithValue("@po_months_validity", 12);
+                pgCmd.Parameters.AddWithValue("@time_format", "hh:mm tt");
                 pgCmd.Parameters.AddWithValue("@site_url", "");
-                pgCmd.Parameters.AddWithValue("@created_by", DBNull.Value);
-                pgCmd.Parameters.AddWithValue("@created_date", DBNull.Value);
-                pgCmd.Parameters.AddWithValue("@modified_by", DBNull.Value);
-                pgCmd.Parameters.AddWithValue("@modified_date", DBNull.Value);
-                pgCmd.Parameters.AddWithValue("@is_deleted", false);
-                pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value);
-                pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value);
 
                 int result = await pgCmd.ExecuteNonQueryAsync();
                 if (result > 0) insertedCount++;

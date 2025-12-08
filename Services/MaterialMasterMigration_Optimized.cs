@@ -13,7 +13,19 @@ public class MaterialMasterMigration : MigrationService
     private const int BATCH_SIZE = 1000; // Process in batches of 1000 records
     private const int PROGRESS_UPDATE_INTERVAL = 100; // Update progress every 100 records
     
-    protected override string SelectQuery => "SELECT ITEMID, ITEMCODE, ITEMNAME, ITEMDESCRIPTION, UOMId, MaterialGroupId, ClientSAPId FROM TBL_ITEMMASTER ORDER BY ITEMID";
+    protected override string SelectQuery => @"
+        SELECT 
+            ITEMID, 
+            ISNULL(ITEMCODE, '') AS ITEMCODE, 
+            ISNULL(ITEMNAME, '') AS ITEMNAME, 
+            ITEMDESCRIPTION, 
+            ISNULL(UOMId, 0) AS UOMId, 
+            ISNULL(MaterialGroupId, 0) AS MaterialGroupId, 
+            ISNULL(ClientSAPId, 0) AS ClientSAPId 
+        FROM TBL_ITEMMASTER 
+        WITH (NOLOCK)
+        WHERE ITEMID IS NOT NULL
+        ORDER BY ITEMID";
     protected override string InsertQuery => @"INSERT INTO material_master (material_id, material_code, material_name, material_description, uom_id, material_group_id, company_id, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) 
                                              VALUES (@material_id, @material_code, @material_name, @material_description, @uom_id, @material_group_id, @company_id, @created_by, @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date)";
 
@@ -86,14 +98,30 @@ public class MaterialMasterMigration : MigrationService
         
         try
         {
+            progress.ReportProgress(0, 0, "Initializing database connections...", stopwatch.Elapsed);
+            
             sqlConn = GetSqlServerConnection();
             pgConn = GetPostgreSqlConnection();
             
-            // Configure SQL connection for large datasets
-            sqlConn.ConnectionString = sqlConn.ConnectionString + ";Connection Timeout=300;Command Timeout=300;";
+            // Configure SQL connection for large datasets with extended timeouts
+            var sqlConnString = sqlConn.ConnectionString;
+            if (!sqlConnString.Contains("Connection Timeout"))
+            {
+                sqlConnString += ";Connection Timeout=600"; // 10 minutes
+            }
+            if (!sqlConnString.Contains("Command Timeout"))
+            {
+                sqlConnString += ";Command Timeout=600"; // 10 minutes
+            }
+            sqlConn.ConnectionString = sqlConnString;
             
+            progress.ReportProgress(0, 0, "Opening SQL Server connection...", stopwatch.Elapsed);
             await sqlConn.OpenAsync();
+            progress.ReportProgress(0, 0, "SQL Server connection opened successfully", stopwatch.Elapsed);
+            
+            progress.ReportProgress(0, 0, "Opening PostgreSQL connection...", stopwatch.Elapsed);
             await pgConn.OpenAsync();
+            progress.ReportProgress(0, 0, "PostgreSQL connection opened successfully", stopwatch.Elapsed);
 
             progress.ReportProgress(0, 0, "Estimating total records...", stopwatch.Elapsed);
             
@@ -129,9 +157,17 @@ public class MaterialMasterMigration : MigrationService
 
     private async Task<int> GetTotalRecordsAsync(SqlConnection sqlConn)
     {
-        using var cmd = new SqlCommand("SELECT COUNT(*) FROM TBL_ITEMMASTER", sqlConn);
-        var result = await cmd.ExecuteScalarAsync();
-        return Convert.ToInt32(result);
+        try
+        {
+            using var cmd = new SqlCommand("SELECT COUNT(*) FROM TBL_ITEMMASTER", sqlConn);
+            cmd.CommandTimeout = 600; // 10 minutes
+            var result = await cmd.ExecuteScalarAsync();
+            return Convert.ToInt32(result);
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"Error getting total record count from TBL_ITEMMASTER: {ex.Message}", ex);
+        }
     }
 
     private async Task<int> GetOrCreateDefaultUomAsync(NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
@@ -173,6 +209,30 @@ public class MaterialMasterMigration : MigrationService
         }
     }
 
+    private async Task<HashSet<int>> LoadValidUomIdsAsync(NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
+    {
+        var validIds = new HashSet<int>();
+        try
+        {
+            var query = "SELECT uom_id FROM uom_master WHERE is_deleted = false OR is_deleted IS NULL";
+            using var cmd = new NpgsqlCommand(query, pgConn);
+            if (transaction != null) cmd.Transaction = transaction;
+            
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                validIds.Add(reader.GetInt32(0));
+            }
+            
+            Console.WriteLine($"✓ Loaded {validIds.Count:N0} valid UOM IDs from uom_master");
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"Error loading valid UOM IDs: {ex.Message}", ex);
+        }
+        return validIds;
+    }
+
     private async Task<int> ExecuteOptimizedMigrationAsync(
         SqlConnection sqlConn, 
         NpgsqlConnection pgConn, 
@@ -188,15 +248,21 @@ public class MaterialMasterMigration : MigrationService
 
         progress.ReportProgress(0, totalRecords, "Starting migration...", stopwatch.Elapsed);
 
-        // Get or create default UOM for missing UOM cases
+        // Load valid UOM IDs from uom_master
+        var validUomIds = await LoadValidUomIdsAsync(pgConn, transaction);
+        progress.ReportProgress(0, totalRecords, $"Loaded {validUomIds.Count:N0} valid UOM IDs", stopwatch.Elapsed);
+
+        // Get or create default UOM for missing/invalid UOM cases
         var defaultUomId = await GetOrCreateDefaultUomAsync(pgConn, transaction);
         progress.ReportProgress(0, totalRecords, $"Default UOM ID: {defaultUomId}", stopwatch.Elapsed);
 
         // Use streaming reader for memory efficiency
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
-        sqlCmd.CommandTimeout = 300; // 5 minutes timeout
+        sqlCmd.CommandTimeout = 600; // 10 minutes timeout
         
+        progress.ReportProgress(0, totalRecords, "Executing SQL query to read data...", stopwatch.Elapsed);
         using var reader = await sqlCmd.ExecuteReaderAsync();
+        progress.ReportProgress(0, totalRecords, "SQL query executed, reading data stream...", stopwatch.Elapsed);
 
         try
         {
@@ -206,7 +272,7 @@ public class MaterialMasterMigration : MigrationService
                 
                 try
                 {
-                    var record = ReadMaterialRecord(reader, processedCount, defaultUomId);
+                    var record = ReadMaterialRecord(reader, processedCount, defaultUomId, validUomIds);
                     
                     if (record != null)
                     {
@@ -223,10 +289,14 @@ public class MaterialMasterMigration : MigrationService
                         if (batch.Count > 0)
                         {
                             progress.ReportProgress(processedCount, totalRecords, 
-                                $"Processing batch of {batch.Count} records...", stopwatch.Elapsed);
+                                $"Processing batch of {batch.Count} records (Total processed: {processedCount}, Inserted: {insertedCount})...", 
+                                stopwatch.Elapsed);
                             
                             int batchInserted = await InsertBatchAsync(pgConn, batch, transaction);
                             insertedCount += batchInserted;
+                            
+                            progress.ReportProgress(processedCount, totalRecords, 
+                                $"Batch completed: {batchInserted} records inserted", stopwatch.Elapsed);
                             
                             batch.Clear();
                         }
@@ -235,8 +305,13 @@ public class MaterialMasterMigration : MigrationService
                     // Update progress periodically
                     if (processedCount % PROGRESS_UPDATE_INTERVAL == 0 || processedCount == totalRecords)
                     {
+                        var recordsPerSecond = processedCount / stopwatch.Elapsed.TotalSeconds;
+                        var eta = TimeSpan.FromSeconds((totalRecords - processedCount) / recordsPerSecond);
+                        
                         progress.ReportProgress(processedCount, totalRecords, 
-                            $"Processed: {processedCount:N0}, Inserted: {insertedCount:N0}, Skipped: {skippedCount:N0}", 
+                            $"Processed: {processedCount:N0}/{totalRecords:N0} ({(processedCount * 100.0 / totalRecords):F1}%) | " +
+                            $"Inserted: {insertedCount:N0} | Skipped: {skippedCount:N0} | " +
+                            $"Speed: {recordsPerSecond:F0} rec/s | ETA: {eta:hh\\:mm\\:ss}", 
                             stopwatch.Elapsed);
                     }
                 }
@@ -246,6 +321,13 @@ public class MaterialMasterMigration : MigrationService
                     throw new Exception($"Error processing record {processedCount} in Material Master Migration: {recordEx.Message}", recordEx);
                 }
             }
+        }
+        catch (SqlException sqlEx) when (sqlEx.Number == -2) // Timeout
+        {
+            progress.ReportError($"SQL Server timeout after processing {processedCount} records. Connection may be unstable or query is too complex.", processedCount);
+            throw new Exception($"SQL Server timeout during Material Master Migration after processing {processedCount} records. " +
+                              $"Possible causes: 1) Network issues, 2) SQL Server overload, 3) Query complexity. " +
+                              $"Original error: {sqlEx.Message}", sqlEx);
         }
         catch (Exception ex)
         {
@@ -275,7 +357,7 @@ public class MaterialMasterMigration : MigrationService
         return insertedCount;
     }
 
-    private MaterialRecord? ReadMaterialRecord(SqlDataReader reader, int recordNumber, int defaultUomId)
+    private MaterialRecord? ReadMaterialRecord(SqlDataReader reader, int recordNumber, int defaultUomId, HashSet<int> validUomIds)
     {
         try
         {
@@ -287,14 +369,15 @@ public class MaterialMasterMigration : MigrationService
             var materialGroupId = reader.IsDBNull(reader.GetOrdinal("MaterialGroupId")) ? 0 : Convert.ToInt32(reader["MaterialGroupId"]);
             var clientSapId = reader.IsDBNull(reader.GetOrdinal("ClientSAPId")) ? 0 : Convert.ToInt32(reader["ClientSAPId"]);
 
-            // Handle missing UOM by using default
-            if (uomId == 0)
+            // Validate and handle UOM ID
+            if (uomId == 0 || !validUomIds.Contains(uomId))
             {
+                var originalUomId = uomId;
                 uomId = defaultUomId;
-                Console.WriteLine($"Record {recordNumber} (ITEMID: {itemId}) - Using default UOM (ID: {defaultUomId}) for missing UOMId");
+                Console.WriteLine($"Record {recordNumber} (ITEMID: {itemId}) - Invalid/Missing UOMId ({originalUomId}), using default UOM (ID: {defaultUomId})");
             }
 
-            // Still skip if MaterialGroup is missing (this is more critical)
+            // Skip if MaterialGroup is missing (this is more critical)
             if (materialGroupId == 0)
             {
                 Console.WriteLine($"Skipping record {recordNumber} (ITEMID: {itemId}) - Missing required MaterialGroupId");

@@ -10,6 +10,14 @@ public class EventMasterMigration : MigrationService
     private readonly ILogger<EventMasterMigration> _logger;
     private readonly int _batchSize;
     private readonly int _transformWorkerCount;
+    
+    // Cache for valid foreign key IDs
+    private HashSet<int> _validCurrencyIds = new HashSet<int>();
+    private HashSet<int> _validCompanyIds = new HashSet<int>();
+    private int _defaultCurrencyId = 1;
+    private int _defaultCompanyId = 1;
+    private int _skippedInvalidCurrency = 0;
+    private int _skippedInvalidCompany = 0;
 
     public EventMasterMigration(IConfiguration configuration, ILogger<EventMasterMigration> logger) : base(configuration)
     {
@@ -355,6 +363,13 @@ public class EventMasterMigration : MigrationService
             var priceBidTemplateCache = await LoadPriceBidTemplateCacheAsync(sqlConnection);
             _logger.LogInformation($"Loaded {priceBidTemplateCache.Count} price_bid_template mappings");
 
+            // Load valid foreign key IDs
+            _logger.LogInformation("🔍 Loading valid foreign key IDs...");
+            _validCurrencyIds = await LoadValidCurrencyIdsAsync(pgConnection);
+            _validCompanyIds = await LoadValidCompanyIdsAsync(pgConnection);
+            _defaultCurrencyId = await GetDefaultCurrencyIdAsync(pgConnection);
+            _defaultCompanyId = await GetDefaultCompanyIdAsync(pgConnection);
+
             // Use optimized bulk migration
             var result = await ExecuteOptimizedBulkMigrationAsync(sqlConnection, pgConnection, totalRecords, priceBidTemplateCache, stopwatch);
             
@@ -418,6 +433,119 @@ public class EventMasterMigration : MigrationService
         }
         
         return cache;
+    }
+
+    private async Task<HashSet<int>> LoadValidCurrencyIdsAsync(NpgsqlConnection pgConn)
+    {
+        var validIds = new HashSet<int>();
+        try
+        {
+            var query = "SELECT currency_id FROM currency_master WHERE is_deleted = false OR is_deleted IS NULL";
+            using var cmd = new NpgsqlCommand(query, pgConn);
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                validIds.Add(reader.GetInt32(0));
+            }
+            _logger.LogInformation($"✓ Loaded {validIds.Count:N0} valid currency IDs");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"❌ Failed to load valid currency IDs: {ex.Message}");
+        }
+        return validIds;
+    }
+
+    private async Task<HashSet<int>> LoadValidCompanyIdsAsync(NpgsqlConnection pgConn)
+    {
+        var validIds = new HashSet<int>();
+        try
+        {
+            var query = "SELECT company_id FROM company_master WHERE is_deleted = false OR is_deleted IS NULL";
+            using var cmd = new NpgsqlCommand(query, pgConn);
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                validIds.Add(reader.GetInt32(0));
+            }
+            _logger.LogInformation($"✓ Loaded {validIds.Count:N0} valid company IDs");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"❌ Failed to load valid company IDs: {ex.Message}");
+        }
+        return validIds;
+    }
+
+    private async Task<int> GetDefaultCurrencyIdAsync(NpgsqlConnection pgConn)
+    {
+        try
+        {
+            var query = @"
+                SELECT currency_id 
+                FROM currency_master 
+                WHERE LOWER(currency_code) IN ('inr', 'usd', 'eur')
+                AND (is_deleted = false OR is_deleted IS NULL)
+                ORDER BY CASE LOWER(currency_code) WHEN 'inr' THEN 1 WHEN 'usd' THEN 2 ELSE 3 END
+                LIMIT 1";
+            
+            using var cmd = new NpgsqlCommand(query, pgConn);
+            var result = await cmd.ExecuteScalarAsync();
+            
+            if (result != null)
+            {
+                int defaultId = Convert.ToInt32(result);
+                _logger.LogInformation($"✓ Default currency ID: {defaultId}");
+                return defaultId;
+            }
+            
+            // Fallback: get any currency
+            query = "SELECT currency_id FROM currency_master LIMIT 1";
+            cmd.CommandText = query;
+            result = await cmd.ExecuteScalarAsync();
+            
+            if (result != null)
+            {
+                return Convert.ToInt32(result);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"❌ Failed to get default currency: {ex.Message}");
+        }
+        
+        _logger.LogWarning("⚠️ No currency found, using fallback ID: 1");
+        return 1;
+    }
+
+    private async Task<int> GetDefaultCompanyIdAsync(NpgsqlConnection pgConn)
+    {
+        try
+        {
+            var query = @"
+                SELECT company_id 
+                FROM company_master 
+                WHERE is_deleted = false OR is_deleted IS NULL
+                ORDER BY company_id
+                LIMIT 1";
+            
+            using var cmd = new NpgsqlCommand(query, pgConn);
+            var result = await cmd.ExecuteScalarAsync();
+            
+            if (result != null)
+            {
+                int defaultId = Convert.ToInt32(result);
+                _logger.LogInformation($"✓ Default company ID: {defaultId}");
+                return defaultId;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"❌ Failed to get default company: {ex.Message}");
+        }
+        
+        _logger.LogWarning("⚠️ No company found, using fallback ID: 1");
+        return 1;
     }
 
     private async Task<(int SuccessCount, int FailedCount, List<string> Errors)> ExecuteOptimizedBulkMigrationAsync(
@@ -630,9 +758,13 @@ public class EventMasterMigration : MigrationService
                     ParentId = reader.IsDBNull(ordinals.ParentId) ? 0 : reader.GetInt32(ordinals.ParentId),
                     PricingStatus = reader.IsDBNull(ordinals.PricingStatus) ? 0 : reader.GetInt32(ordinals.PricingStatus),
                     IsExtend = reader.IsDBNull(ordinals.IsExtend) ? 0 : reader.GetInt32(ordinals.IsExtend),
-                    EventCurrencyId = reader.IsDBNull(ordinals.EventCurrencyId) ? 0 : reader.GetInt32(ordinals.EventCurrencyId),
+                    EventCurrencyId = reader.IsDBNull(ordinals.EventCurrencyId) || reader.GetInt32(ordinals.EventCurrencyId) == 0 
+                        ? _defaultCurrencyId 
+                        : reader.GetInt32(ordinals.EventCurrencyId),
                     IschkIsSendMail = reader.IsDBNull(ordinals.IschkIsSendMail) ? 0 : reader.GetInt32(ordinals.IschkIsSendMail),
-                    ClientSAPId = reader.IsDBNull(ordinals.ClientSAPId) ? 0 : reader.GetInt32(ordinals.ClientSAPId),
+                    ClientSAPId = reader.IsDBNull(ordinals.ClientSAPId) || reader.GetInt32(ordinals.ClientSAPId) == 0 
+                        ? _defaultCompanyId 
+                        : reader.GetInt32(ordinals.ClientSAPId),
                     TechnicalApprovalSendDate = reader.IsDBNull(ordinals.TechnicalApprovalSendDate) ? null : DateTime.SpecifyKind(reader.GetDateTime(ordinals.TechnicalApprovalSendDate), DateTimeKind.Utc),
                     TechnicalApprovalApprovedDate = reader.IsDBNull(ordinals.TechnicalApprovalApprovedDate) ? null : DateTime.SpecifyKind(reader.GetDateTime(ordinals.TechnicalApprovalApprovedDate), DateTimeKind.Utc),
                     TechnicalApprovalStatus = reader.IsDBNull(ordinals.TechnicalApprovalStatus) ? null : reader.GetString(ordinals.TechnicalApprovalStatus),
@@ -671,6 +803,33 @@ public class EventMasterMigration : MigrationService
                     MaxBidMode = reader.IsDBNull(ordinals.MaxBidMode) ? 0 : reader.GetInt32(ordinals.MaxBidMode)
                 };
 
+                // Validate foreign keys
+                if (!_validCurrencyIds.Contains(raw.EventCurrencyId))
+                {
+                    if (_skippedInvalidCurrency < 10)
+                    {
+                        _logger.LogWarning($"⚠️ Event {raw.EventId}: Invalid currency_id {raw.EventCurrencyId}, using default {_defaultCurrencyId}");
+                    }
+                    raw.EventCurrencyId = _defaultCurrencyId;
+                    Interlocked.Increment(ref _skippedInvalidCurrency);
+                }
+
+                if (!_validCompanyIds.Contains(raw.ClientSAPId))
+                {
+                    if (_skippedInvalidCompany < 10)
+                    {
+                        _logger.LogWarning($"⚠️ Event {raw.EventId}: Invalid company_id {raw.ClientSAPId}, using default {_defaultCompanyId}");
+                    }
+                    raw.ClientSAPId = _defaultCompanyId;
+                    Interlocked.Increment(ref _skippedInvalidCompany);
+                }
+
+                // Ensure Round is at least 1
+                if (raw.Round == 0)
+                {
+                    raw.Round = 1;
+                }
+
                 rawQueue.Add(raw, token);
 
                 if (processedCount % 5000 == 0)
@@ -703,6 +862,16 @@ public class EventMasterMigration : MigrationService
             writeQueue.Dispose();
             cts.Dispose();
         }
+
+        // Log validation statistics
+        _logger.LogInformation("═══════════════════════════════════════");
+        _logger.LogInformation("📊 Event Master Migration Summary");
+        _logger.LogInformation("═══════════════════════════════════════");
+        _logger.LogInformation($"  ✓ Successfully inserted: {insertedCount:N0}");
+        _logger.LogInformation($"  ⚠️ Invalid currency (corrected): {_skippedInvalidCurrency:N0}");
+        _logger.LogInformation($"  ⚠️ Invalid company (corrected): {_skippedInvalidCompany:N0}");
+        _logger.LogInformation($"  ❌ Failed (errors): {errorCount:N0}");
+        _logger.LogInformation("═══════════════════════════════════════");
 
         return (insertedCount, errorCount, errors.ToList());
     }
