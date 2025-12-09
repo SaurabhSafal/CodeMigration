@@ -4,14 +4,25 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
+using Microsoft.Extensions.Logging;
+using DataMigration.Services;
 
 public class CurrencyMasterMigration : MigrationService
 {
+    private readonly ILogger<CurrencyMasterMigration> _logger;
+    private readonly MigrationLogger migrationLogger;
+
     protected override string SelectQuery => "SELECT CurrencyMastID, Currency_Code, Currency_Name FROM TBL_CURRENCYMASTER";
     protected override string InsertQuery => @"INSERT INTO currency_master (company_id, currency_code, currency_name, currency_short_name, decimal_places, iso_code, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) 
                                              VALUES (@company_id, @currency_code, @currency_name, @currency_short_name, @decimal_places, @iso_code, @created_by, @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date)";
 
-    public CurrencyMasterMigration(IConfiguration configuration) : base(configuration) { }
+    public CurrencyMasterMigration(IConfiguration configuration, ILogger<CurrencyMasterMigration> logger) : base(configuration) 
+    { 
+        _logger = logger;
+        migrationLogger = new MigrationLogger(_logger, "currency_master");
+    }
+
+    public MigrationLogger GetLogger() => migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -54,19 +65,17 @@ public class CurrencyMasterMigration : MigrationService
 
         if (companyIds.Count == 0)
         {
-            Console.WriteLine("⚠️  WARNING: No companies found in company_master. Please migrate companies first!");
+            migrationLogger.LogInfo("No companies found in company_master. Please migrate companies first!");
             return 0;
         }
 
-        Console.WriteLine($"✓ Found {companyIds.Count} companies. Will insert currencies for each company.");
+        migrationLogger.LogInfo($"Found {companyIds.Count} companies. Will insert currencies for each company.");
 
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await sqlCmd.ExecuteReaderAsync();
 
         using var pgCmd = new NpgsqlCommand(InsertQuery, pgConn, transaction);
 
-        int insertedCount = 0;
-        int skippedCount = 0;
         int currencyCount = 0;
 
         while (await reader.ReadAsync())
@@ -74,10 +83,13 @@ public class CurrencyMasterMigration : MigrationService
             currencyCount++;
             var currencyCode = reader["Currency_Code"]?.ToString();
             var currencyName = reader["Currency_Name"]?.ToString();
+            var currencyMastId = reader["CurrencyMastID"];
 
             // For each source currency row, insert one row per company
             foreach (var companyId in companyIds)
             {
+                var recordId = $"Currency={currencyCode},Company={companyId}";
+                
                 pgCmd.Parameters.Clear();
                 pgCmd.Parameters.AddWithValue("@company_id", companyId);
                 pgCmd.Parameters.AddWithValue("@currency_code", currencyCode ?? (object)DBNull.Value);
@@ -96,17 +108,19 @@ public class CurrencyMasterMigration : MigrationService
                 try
                 {
                     int result = await pgCmd.ExecuteNonQueryAsync();
-                    if (result > 0) insertedCount++;
+                    if (result > 0)
+                    {
+                        migrationLogger.LogInserted(recordId);
+                    }
                 }
                 catch (Exception ex)
                 {
-                    skippedCount++;
-                    Console.WriteLine($"⚠️  Warning: Failed to insert currency '{currencyCode}' for company {companyId}: {ex.Message}");
+                    migrationLogger.LogError($"Failed to insert currency '{currencyCode}' for company {companyId}: {ex.Message}", recordId, ex);
                     
                     // If we're in a transaction and it's aborted, we need to stop
                     if (transaction != null && ex.Message.Contains("current transaction is aborted"))
                     {
-                        Console.WriteLine("❌ Transaction aborted. Rolling back all changes.");
+                        migrationLogger.LogError("Transaction aborted. Rolling back all changes.", null, ex);
                         throw; // Re-throw to trigger rollback
                     }
                 }
@@ -114,16 +128,13 @@ public class CurrencyMasterMigration : MigrationService
 
             if (currencyCount % 10 == 0)
             {
-                Console.WriteLine($"📊 Processed {currencyCount} currencies... (Inserted: {insertedCount}, Skipped: {skippedCount})");
+                migrationLogger.LogInfo($"Processed {currencyCount} currencies... (Inserted: {migrationLogger.InsertedCount}, Errors: {migrationLogger.ErrorCount})");
             }
         }
 
-        Console.WriteLine($"\n📊 Currency Migration Summary:");
-        Console.WriteLine($"   Source currencies: {currencyCount}");
-        Console.WriteLine($"   Companies: {companyIds.Count}");
-        Console.WriteLine($"   ✓ Successfully inserted: {insertedCount}");
-        Console.WriteLine($"   ⚠️  Skipped (duplicates/errors): {skippedCount}");
+        var summary = migrationLogger.GetSummary();
+        _logger.LogInformation($"Currency Migration Summary: Source currencies: {currencyCount}, Companies: {companyIds.Count}, Inserted: {summary.TotalInserted}, Errors: {summary.TotalErrors}");
 
-        return insertedCount;
+        return summary.TotalInserted;
     }
 }

@@ -7,6 +7,7 @@ namespace DataMigration.Services
     public class AuctionMinMaxTargetPriceMigration
     {
         private readonly ILogger<AuctionMinMaxTargetPriceMigration> _logger;
+        private MigrationLogger? _migrationLogger;
         private readonly IConfiguration _configuration;
 
         public AuctionMinMaxTargetPriceMigration(IConfiguration configuration, ILogger<AuctionMinMaxTargetPriceMigration> logger)
@@ -14,6 +15,8 @@ namespace DataMigration.Services
             _configuration = configuration;
             _logger = logger;
         }
+
+        public MigrationLogger? GetLogger() => _migrationLogger;
 
         public List<object> GetMappings()
         {
@@ -33,17 +36,20 @@ namespace DataMigration.Services
 
         public async Task<int> MigrateAsync()
         {
+            _migrationLogger = new MigrationLogger(_logger, "auction_min_max_target_price");
+            _migrationLogger.LogInfo("Starting AuctionMinMaxTargetPrice migration");
+
             var sqlConnectionString = _configuration.GetConnectionString("SqlServer");
             var pgConnectionString = _configuration.GetConnectionString("PostgreSql");
 
             if (string.IsNullOrEmpty(sqlConnectionString) || string.IsNullOrEmpty(pgConnectionString))
             {
+                _migrationLogger.LogError("Database connection strings are not configured properly.", "N/A");
                 throw new InvalidOperationException("Database connection strings are not configured properly.");
             }
 
             var migratedRecords = 0;
             var skippedRecords = 0;
-            var errors = new List<string>();
 
             try
             {
@@ -53,7 +59,7 @@ namespace DataMigration.Services
                 await sqlConnection.OpenAsync();
                 await pgConnection.OpenAsync();
 
-                _logger.LogInformation("Starting AuctionMinMaxTargetPrice migration...");
+                _migrationLogger.LogInfo("Fetching valid event_ids from event_master");
 
                 // Get valid event_ids from PostgreSQL (remove is_deleted filter to include all events)
                 var validEventIds = new HashSet<int>();
@@ -66,7 +72,7 @@ namespace DataMigration.Services
                     }
                 }
 
-                _logger.LogInformation($"Found {validEventIds.Count} valid event_ids (including deleted)");
+                _migrationLogger.LogInfo($"Found {validEventIds.Count} valid event_ids (including deleted)");
 
                 // Get event_item_id mapping from erp_pr_lines_id (PRtransId) - remove is_deleted filter
                 var erp_pr_lines_idToEventItemIdMap = new Dictionary<int, int>();
@@ -81,11 +87,11 @@ namespace DataMigration.Services
                     }
                 }
 
-                _logger.LogInformation($"Found {erp_pr_lines_idToEventItemIdMap.Count} event_item mappings from erp_pr_lines_id (including deleted)");
+                _migrationLogger.LogInfo($"Found {erp_pr_lines_idToEventItemIdMap.Count} event_item mappings from erp_pr_lines_id (including deleted)");
 
                 // Fetch data from SQL Server with JOIN to TBL_PB_BUYER for BasicPrice
                 var sourceData = new List<(int Id, int? EventId, int PRtransId, decimal? Target, decimal? BasicPrice, decimal? MinBid, decimal? MaxBid, int? MinBidMode, int? MaxBidMode)>();
-                
+
                 using (var cmd = new SqlCommand(@"SELECT 
                     itp.Id,
                     itp.EventId,
@@ -116,18 +122,26 @@ namespace DataMigration.Services
                     }
                 }
 
-                _logger.LogInformation($"Found {sourceData.Count} records in source table");
+                _migrationLogger.LogInfo($"Found {sourceData.Count} records in source table");
 
+                int processedCount = 0;
                 foreach (var record in sourceData)
                 {
+                    processedCount++;
                     try
                     {
                         // Validate event_id exists (FK constraint)
                         if (!record.EventId.HasValue || !validEventIds.Contains(record.EventId.Value))
                         {
-                            var errorMsg = $"Id {record.Id}: event_id {record.EventId} not found in event_master (FK constraint violation)";
-                            _logger.LogWarning(errorMsg);
-                            errors.Add(errorMsg);
+                            _migrationLogger.LogSkipped(
+                                $"event_id {record.EventId} not found in event_master (FK constraint violation)",
+                                $"Id={record.Id}",
+                                new Dictionary<string, object>
+                                {
+                                    { "EventId", record.EventId },
+                                    { "SourceId", record.Id }
+                                }
+                            );
                             skippedRecords++;
                             continue;
                         }
@@ -135,9 +149,15 @@ namespace DataMigration.Services
                         // Get event_item_id from PRtransId mapping
                         if (!erp_pr_lines_idToEventItemIdMap.TryGetValue(record.PRtransId, out var eventItemId))
                         {
-                            var errorMsg = $"Id {record.Id}: PRtransId {record.PRtransId} not found in event_items.erp_pr_lines_id mapping (FK constraint violation)";
-                            _logger.LogWarning(errorMsg);
-                            errors.Add(errorMsg);
+                            _migrationLogger.LogSkipped(
+                                $"PRtransId {record.PRtransId} not found in event_items.erp_pr_lines_id mapping (FK constraint violation)",
+                                $"Id={record.Id}",
+                                new Dictionary<string, object>
+                                {
+                                    { "PRtransId", record.PRtransId },
+                                    { "SourceId", record.Id }
+                                }
+                            );
                             skippedRecords++;
                             continue;
                         }
@@ -193,7 +213,7 @@ namespace DataMigration.Services
                             updateCmd.Parameters.AddWithValue("@MaxBidType", maxBidType);
 
                             await updateCmd.ExecuteNonQueryAsync();
-                            _logger.LogDebug($"Updated record with Id: {record.Id}");
+                            _migrationLogger.LogInfo($"Updated record with Id: {record.Id}", $"Id={record.Id}");
                         }
                         else
                         {
@@ -246,31 +266,40 @@ namespace DataMigration.Services
                             insertCmd.Parameters.AddWithValue("@MinBidType", minBidType);
                             insertCmd.Parameters.AddWithValue("@MaxBidType", maxBidType);
 
-                            await insertCmd.ExecuteNonQueryAsync();
-                            _logger.LogDebug($"Inserted new record with Id: {record.Id}");
+                            int result = await insertCmd.ExecuteNonQueryAsync();
+                            if (result > 0)
+                            {
+                                migratedRecords++;
+                                _migrationLogger.LogInserted($"Id={record.Id}");
+                            }
                         }
 
-                        migratedRecords++;
+                        if (processedCount % 1000 == 0)
+                        {
+                            _migrationLogger.LogInfo($"Processed {processedCount} records");
+                        }
                     }
                     catch (Exception ex)
                     {
-                        var errorMsg = $"Id {record.Id}: {ex.Message}";
-                        _logger.LogError(errorMsg);
-                        errors.Add(errorMsg);
+                        _migrationLogger.LogError(
+                            $"Error processing record: {ex.Message}",
+                            $"Id={record.Id}",
+                            ex,
+                            new Dictionary<string, object>
+                            {
+                                { "CurrentOperation", "InsertOrUpdate" },
+                                { "SourceId", record.Id }
+                            }
+                        );
                         skippedRecords++;
                     }
                 }
 
-                _logger.LogInformation($"Migration completed. Migrated: {migratedRecords}, Skipped: {skippedRecords}");
-                
-                if (errors.Any())
-                {
-                    _logger.LogWarning($"Encountered {errors.Count} errors during migration");
-                }
+                _migrationLogger.LogInfo($"Migration completed. Migrated: {migratedRecords}, Skipped: {skippedRecords}");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Migration failed");
+                _migrationLogger.LogError("Migration failed", "N/A", ex);
                 throw;
             }
 

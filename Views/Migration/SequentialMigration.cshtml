@@ -923,6 +923,7 @@
                     let skippedCount = 0;
                     let insertedCount = 0;
                     let detailMessage = result.message;
+                    let tableLogs = []; // Store table-specific logs
                     
                     // Check if result has details object (for EventMaster and similar)
                     if (result.details) {
@@ -931,6 +932,12 @@
                             insertedCount = result.details.successCount;
                             skippedCount = result.details.failedCount || 0;
                             detailMessage = `Success: ${result.details.successCount}, Failed: ${result.details.failedCount || 0}`;
+                        } else if (result.details.inserted !== undefined) {
+                            // New format with detailed logs
+                            insertedCount = result.details.inserted || 0;
+                            skippedCount = result.details.skipped || 0;
+                            recordCount = insertedCount;
+                            detailMessage = `Inserted: ${insertedCount}, Skipped: ${skippedCount}`;
                         }
                     } else {
                         // Extract from message
@@ -944,6 +951,32 @@
                         }
                     }
                     
+                    // Capture logs if present
+                    if (result.logs && Array.isArray(result.logs)) {
+                        tableLogs = result.logs;
+                        // Add logs to the log display (grouped format)
+                        result.logs.forEach(log => {
+                            const logLevel = log.level.toLowerCase();
+                            const logType = logLevel === 'error' ? 'error' : 
+                                          logLevel === 'warning' ? 'warning' : 
+                                          logLevel === 'debug' ? 'info' : 'info';
+                            
+                            // Format grouped log message
+                            let logMessage = '';
+                            if (log.recordCount && log.recordCount > 1) {
+                                // Multiple records - show range
+                                const idRange = getIdRange(log.recordIds);
+                                logMessage = `[${migration.display}] ${idRange} (${log.recordCount} records): ${log.message}`;
+                            } else {
+                                // Single record
+                                const recordId = log.recordIds && log.recordIds.length > 0 ? log.recordIds[0] : 'N/A';
+                                logMessage = `[${migration.display}] ${recordId}: ${log.message}`;
+                            }
+                            
+                            addLog(logMessage, logType);
+                        });
+                    }
+                    
                     migrationResults.push({
                         table: migration.display,
                         apiName: migration.api,
@@ -955,7 +988,8 @@
                         details: detailMessage,
                         time: new Date().toLocaleTimeString(),
                         errorMessage: 'N/A',
-                        fullResponse: result
+                        fullResponse: result,
+                        logs: tableLogs // Store logs for Excel export
                     });
 
                     updateTimelineItem(currentIndex, 'success', 
@@ -1030,6 +1064,38 @@
         function extractRecordCount(message) {
             const match = message.match(/(\d+)\s+records?\s+migrated/i);
             return match ? parseInt(match[1]) : 0;
+        }
+
+        // Helper function to get ID range from record identifiers
+        function getIdRange(identifiers) {
+            if (!identifiers || identifiers.length === 0) return 'N/A';
+            if (identifiers.length === 1) return identifiers[0];
+            
+            // Try to extract numeric IDs
+            const numericIds = [];
+            const prefix = identifiers[0].split('=')[0];
+            
+            identifiers.forEach(id => {
+                const match = id.match(/(\d+)/);
+                if (match) {
+                    numericIds.push(parseInt(match[1]));
+                }
+            });
+            
+            if (numericIds.length > 0) {
+                numericIds.sort((a, b) => a - b);
+                const min = numericIds[0];
+                const max = numericIds[numericIds.length - 1];
+                
+                // Check if it's a continuous range
+                if (numericIds.length === max - min + 1) {
+                    return `${prefix}=${min}-${max}`;
+                } else {
+                    return `${prefix}=${min}...${max}`;
+                }
+            }
+            
+            return `${identifiers[0]}...${identifiers[identifiers.length - 1]}`;
         }
 
         // Update timeline item
@@ -1262,15 +1328,50 @@
                 csvContent += "\n\n";
             }
             
-            // Add Table-Specific Logs Section (New Feature!)
+            // Add Table-Specific Logs Section (Enhanced with captured logs!)
             csvContent += "=== TABLE-SPECIFIC LOGS ===\n\n";
             
-            // Group console logs by table (extract from log entries)
-            const consoleLogs = Array.from(document.querySelectorAll('#logContainer .log-entry'));
+            // Use captured logs from migration results first, then fallback to console logs
+            reportData.details.forEach(detail => {
+                // Check if this table has captured logs from the API response
+                const migrationResult = migrationResults.find(r => r.table === detail.tableName);
+                const capturedLogs = migrationResult && migrationResult.logs ? migrationResult.logs : [];
+                
+                if (capturedLogs.length > 0) {
+                    csvContent += `--- Logs for: ${detail.tableName} (from API) ---\n`;
+                    csvContent += "Log Type,Record ID/Range,Count,Message,Timestamp\n";
+                    capturedLogs.forEach(log => {
+                        const msg = log.message.replace(/"/g, '""');
+                        const recordCount = log.recordCount || 1;
+                        let recordIdDisplay = 'N/A';
+                        
+                        if (log.recordIds && log.recordIds.length > 0) {
+                            if (recordCount > 1) {
+                                recordIdDisplay = getIdRange(log.recordIds);
+                            } else {
+                                recordIdDisplay = log.recordIds[0] || 'N/A';
+                            }
+                        } else if (log.recordId) {
+                            // Fallback to old format
+                            recordIdDisplay = log.recordId;
+                        }
+                        
+                        const timestamp = log.firstTimestamp || log.timestamp || '';
+                        csvContent += `${log.level.toUpperCase()},"${recordIdDisplay}",${recordCount},"${msg}","${timestamp}"\n`;
+                    });
+                    csvContent += "\n";
+                }
+            });
+            
+            // Also add logs from UI console (for tables without captured logs)
+            const consoleLogs = Array.from(document.querySelectorAll('#liveLog .log-entry'));
             const tableLogsMap = new Map();
             
             reportData.details.forEach(detail => {
-                tableLogsMap.set(detail.tableName, []);
+                const migrationResult = migrationResults.find(r => r.table === detail.tableName);
+                if (!migrationResult || !migrationResult.logs || migrationResult.logs.length === 0) {
+                    tableLogsMap.set(detail.tableName, []);
+                }
             });
             
             consoleLogs.forEach(logEntry => {
@@ -1279,29 +1380,32 @@
                                logEntry.classList.contains('log-error') ? 'ERROR' :
                                logEntry.classList.contains('log-warning') ? 'WARNING' : 'INFO';
                 
-                // Try to match log to a table
+                // Try to match log to a table that doesn't have captured logs
                 reportData.details.forEach(detail => {
-                    if (logText.toLowerCase().includes(detail.tableName.toLowerCase()) ||
-                        logText.includes(`migration: ${detail.tableName}`) ||
-                        logText.includes(`completed for ${detail.tableName}`)) {
-                        
-                        // Avoid duplicate logs
-                        const cleanLog = logText.replace(/[\n\r]+/g, ' ').trim();
-                        if (!tableLogsMap.get(detail.tableName).includes(cleanLog)) {
-                            tableLogsMap.get(detail.tableName).push({
-                                type: logType,
-                                message: cleanLog
-                            });
+                    if (tableLogsMap.has(detail.tableName)) {
+                        if (logText.toLowerCase().includes(detail.tableName.toLowerCase()) ||
+                            logText.includes(`migration: ${detail.tableName}`) ||
+                            logText.includes(`[${detail.tableName}]`) ||
+                            logText.includes(`completed for ${detail.tableName}`)) {
+                            
+                            // Avoid duplicate logs
+                            const cleanLog = logText.replace(/[\n\r]+/g, ' ').trim();
+                            const existingLogs = tableLogsMap.get(detail.tableName);
+                            if (!existingLogs.some(l => l.message === cleanLog)) {
+                                existingLogs.push({
+                                    type: logType,
+                                    message: cleanLog
+                                });
+                            }
                         }
                     }
                 });
             });
             
-            // Add logs for each table
-            reportData.details.forEach(detail => {
-                const logs = tableLogsMap.get(detail.tableName) || [];
+            // Add console logs for tables without captured logs
+            tableLogsMap.forEach((logs, tableName) => {
                 if (logs.length > 0) {
-                    csvContent += `--- Logs for: ${detail.tableName} ---\n`;
+                    csvContent += `--- Logs for: ${tableName} (from Console) ---\n`;
                     csvContent += "Log Type,Message\n";
                     logs.forEach(log => {
                         const msg = log.message.replace(/"/g, '""');

@@ -6,11 +6,20 @@ using Npgsql;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Linq;
+using DataMigration.Services; // Ensure this is present for MigrationLogger
 
 public class EventBoqItemsMigration : MigrationService
 {
     private const int BATCH_SIZE = 500;
     private readonly ILogger<EventBoqItemsMigration> _logger;
+    private MigrationLogger? _migrationLogger;
+
+    public EventBoqItemsMigration(IConfiguration configuration, ILogger<EventBoqItemsMigration> logger) : base(configuration)
+    {
+        _logger = logger;
+    }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     protected override string SelectQuery => @"
 SELECT
@@ -44,11 +53,6 @@ ON CONFLICT (event_boq_items_id) DO UPDATE SET
     uom = EXCLUDED.uom,
     boq_qty = EXCLUDED.boq_qty";
 
-    public EventBoqItemsMigration(IConfiguration configuration, ILogger<EventBoqItemsMigration> logger) : base(configuration)
-    {
-        _logger = logger;
-    }
-
     protected override List<string> GetLogics() => new List<string>
     {
         "Direct", // event_boq_items_id
@@ -80,28 +84,33 @@ ON CONFLICT (event_boq_items_id) DO UPDATE SET
 
     public async Task<int> MigrateAsync()
     {
-        return await base.MigrateAsync(useTransaction: true);
+        _migrationLogger = new MigrationLogger(_logger, "event_boq_items");
+        _migrationLogger.LogInfo("Starting EventBoqItems migration");
+        int result = await base.MigrateAsync(useTransaction: true);
+        _migrationLogger.LogInfo($"Completed: {_migrationLogger.InsertedCount} inserted, {_migrationLogger.SkippedCount} skipped");
+        return result;
     }
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
-        _logger.LogInformation("Starting EventBoqItems migration...");
+        _migrationLogger?.LogInfo("Loading valid event and event_item IDs...");
         int insertedCount = 0;
         int skippedCount = 0;
         int batchNumber = 0;
         var batch = new List<Dictionary<string, object>>();
 
-        // Load valid event IDs and event_item IDs
         var validEventIds = await LoadValidEventIdsAsync(pgConn, transaction);
         var validEventItemIds = await LoadValidEventItemIdsAsync(pgConn, transaction);
-        _logger.LogInformation($"Loaded {validEventIds.Count} valid event IDs and {validEventItemIds.Count} valid event_item IDs.");
+        _migrationLogger?.LogInfo($"Loaded {validEventIds.Count} valid event IDs and {validEventItemIds.Count} valid event_item IDs.");
 
         using var selectCmd = new SqlCommand(SelectQuery, sqlConn);
         selectCmd.CommandTimeout = 300;
         using var reader = await selectCmd.ExecuteReaderAsync();
 
+        int processedCount = 0;
         while (await reader.ReadAsync())
         {
+            processedCount++;
             var pbSubId = reader["PBSubId"] ?? DBNull.Value;
             var pbId = reader["PBID"] ?? DBNull.Value;
             var eventId = reader["EVENTID"] ?? DBNull.Value;
@@ -113,10 +122,16 @@ ON CONFLICT (event_boq_items_id) DO UPDATE SET
             var rate = reader["Rate"] ?? DBNull.Value;
             var quantity = reader["Quantity"] ?? DBNull.Value;
 
+            string recordId = $"PBSubId={pbSubId}";
+
             // Validate required keys
             if (pbSubId == DBNull.Value)
             {
-                _logger.LogWarning($"Skipping row: PBSubId is NULL.");
+                _migrationLogger?.LogSkipped(
+                    "PBSubId is NULL",
+                    recordId,
+                    new Dictionary<string, object> { { "PBSubId", pbSubId } }
+                );
                 skippedCount++;
                 continue;
             }
@@ -127,10 +142,24 @@ ON CONFLICT (event_boq_items_id) DO UPDATE SET
                 int eventIdValue = Convert.ToInt32(eventId);
                 if (!validEventIds.Contains(eventIdValue))
                 {
-                    _logger.LogWarning($"Skipping PBSubId {pbSubId}: event_id (EVENTID) {eventIdValue} not found in event_master.");
+                    _migrationLogger?.LogSkipped(
+                        $"event_id (EVENTID) {eventIdValue} not found in event_master",
+                        recordId,
+                        new Dictionary<string, object> { { "EVENTID", eventIdValue } }
+                    );
                     skippedCount++;
                     continue;
                 }
+            }
+            else
+            {
+                _migrationLogger?.LogSkipped(
+                    "EVENTID is NULL",
+                    recordId,
+                    new Dictionary<string, object> { { "EVENTID", eventId } }
+                );
+                skippedCount++;
+                continue;
             }
 
             // Validate event_item_id (PBID) exists in event_items table
@@ -139,17 +168,31 @@ ON CONFLICT (event_boq_items_id) DO UPDATE SET
                 int eventItemIdValue = Convert.ToInt32(pbId);
                 if (!validEventItemIds.Contains(eventItemIdValue))
                 {
-                    _logger.LogWarning($"Skipping PBSubId {pbSubId}: event_item_id (PBID) {eventItemIdValue} not found in event_items.");
+                    _migrationLogger?.LogSkipped(
+                        $"event_item_id (PBID) {eventItemIdValue} not found in event_items",
+                        recordId,
+                        new Dictionary<string, object> { { "PBID", eventItemIdValue } }
+                    );
                     skippedCount++;
                     continue;
                 }
+            }
+            else
+            {
+                _migrationLogger?.LogSkipped(
+                    "PBID is NULL",
+                    recordId,
+                    new Dictionary<string, object> { { "PBID", pbId } }
+                );
+                skippedCount++;
+                continue;
             }
 
             var record = new Dictionary<string, object>
             {
                 ["event_boq_items_id"] = pbSubId,
                 ["event_item_id"] = pbId,
-                ["event_id"] = eventId, // Now using EVENTID from TBL_PB_BUYER
+                ["event_id"] = eventId,
                 ["pr_boq_id"] = prBoqId,
                 ["material_code"] = itemCode,
                 ["material_name"] = itemName,
@@ -163,20 +206,25 @@ ON CONFLICT (event_boq_items_id) DO UPDATE SET
             if (batch.Count >= BATCH_SIZE)
             {
                 batchNumber++;
-                _logger.LogInformation($"Inserting batch {batchNumber} with {batch.Count} records...");
+                _migrationLogger?.LogInfo($"Inserting batch {batchNumber} with {batch.Count} records...");
                 insertedCount += await InsertBatchAsync(pgConn, batch, transaction, batchNumber);
                 batch.Clear();
+            }
+
+            if (processedCount % 1000 == 0)
+            {
+                _migrationLogger?.LogInfo($"Processed {processedCount} records");
             }
         }
 
         if (batch.Count > 0)
         {
             batchNumber++;
-            _logger.LogInformation($"Inserting final batch {batchNumber} with {batch.Count} records...");
+            _migrationLogger?.LogInfo($"Inserting final batch {batchNumber} with {batch.Count} records...");
             insertedCount += await InsertBatchAsync(pgConn, batch, transaction, batchNumber);
         }
 
-        _logger.LogInformation($"EventBoqItems migration completed. Inserted: {insertedCount}, Skipped: {skippedCount}");
+        _migrationLogger?.LogInfo($"EventBoqItems migration completed. Inserted: {insertedCount}, Skipped: {skippedCount}");
         return insertedCount;
     }
 
@@ -192,7 +240,11 @@ ON CONFLICT (event_boq_items_id) DO UPDATE SET
 
         if (deduplicatedBatch.Count < batch.Count)
         {
-            _logger.LogWarning($"Batch {batchNumber}: Removed {batch.Count - deduplicatedBatch.Count} duplicate event_boq_items_id records.");
+            _migrationLogger?.LogSkipped(
+                $"Batch {batchNumber}: Removed {batch.Count - deduplicatedBatch.Count} duplicate event_boq_items_id records.",
+                $"Batch={batchNumber}",
+                new Dictionary<string, object> { { "DuplicatesRemoved", batch.Count - deduplicatedBatch.Count } }
+            );
         }
 
         var columns = new List<string> {
@@ -228,7 +280,14 @@ ON CONFLICT (event_boq_items_id) DO UPDATE SET {updateSet}";
         insertCmd.Parameters.AddRange(parameters.ToArray());
 
         int result = await insertCmd.ExecuteNonQueryAsync();
-        _logger.LogInformation($"Batch {batchNumber}: Inserted/Updated {result} records.");
+
+        foreach (var record in deduplicatedBatch)
+        {
+            string recordId = $"PBSubId={record["event_boq_items_id"]}";
+            _migrationLogger?.LogInserted(recordId);
+        }
+
+        _migrationLogger?.LogInfo($"Batch {batchNumber}: Inserted/Updated {result} records.");
         return result;
     }
 
@@ -236,15 +295,12 @@ ON CONFLICT (event_boq_items_id) DO UPDATE SET {updateSet}";
     {
         var validIds = new HashSet<int>();
         var query = "SELECT event_id FROM event_master";
-        
         using var cmd = new NpgsqlCommand(query, pgConn, transaction);
         using var reader = await cmd.ExecuteReaderAsync();
-        
         while (await reader.ReadAsync())
         {
             validIds.Add(reader.GetInt32(0));
         }
-        
         return validIds;
     }
 
@@ -252,15 +308,12 @@ ON CONFLICT (event_boq_items_id) DO UPDATE SET {updateSet}";
     {
         var validIds = new HashSet<int>();
         var query = "SELECT event_item_id FROM event_items";
-        
         using var cmd = new NpgsqlCommand(query, pgConn, transaction);
         using var reader = await cmd.ExecuteReaderAsync();
-        
         while (await reader.ReadAsync())
         {
             validIds.Add(reader.GetInt32(0));
         }
-        
         return validIds;
     }
 }

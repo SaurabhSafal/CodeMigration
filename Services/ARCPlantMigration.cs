@@ -5,11 +5,13 @@ using Microsoft.Data.SqlClient;
 using Npgsql;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
+using DataMigration.Services;
 
 public class ARCPlantMigration : MigrationService
 {
     private const int BATCH_SIZE = 1000;
     private readonly ILogger<ARCPlantMigration> _logger;
+    private readonly MigrationLogger migrationLogger;
 
     protected override string SelectQuery => @"SELECT * FROM TBL_ARCPlant ORDER BY ARCPlantId";
     protected override string InsertQuery => @"INSERT INTO arc_plant (...) VALUES (...)"; // Not used, but required
@@ -24,7 +26,10 @@ public class ARCPlantMigration : MigrationService
     public ARCPlantMigration(IConfiguration configuration, ILogger<ARCPlantMigration> logger) : base(configuration)
     {
         _logger = logger;
+        migrationLogger = new MigrationLogger(_logger, "ARCPlant");
     }
+
+    public MigrationLogger GetLogger() => migrationLogger;
 
     public override List<object> GetMappings()
     {
@@ -60,7 +65,6 @@ public class ARCPlantMigration : MigrationService
         // Note: No need to load validUserIds as TBL_ARCPlant doesn't have CreatedBy column
 
         int insertedCount = 0;
-        int skippedCount = 0;
         int batchNumber = 0;
         var batch = new List<Dictionary<string, object>>();
         using var selectCmd = new SqlCommand(SelectQuery, sqlConn);
@@ -73,37 +77,39 @@ public class ARCPlantMigration : MigrationService
             var incotermId = reader.IsDBNull(reader.GetOrdinal("IncoTerm")) ? (int?)null : Convert.ToInt32(reader["IncoTerm"]);
             var supplierId = reader.IsDBNull(reader.GetOrdinal("AssignDistributor")) ? (int?)null : Convert.ToInt32(reader["AssignDistributor"]);
 
+            // Get ARCPlantId for logging
+            var arcPlantId = reader.IsDBNull(reader.GetOrdinal("ARCPlantId")) ? "Unknown" : reader["ARCPlantId"].ToString();
+
             // Skip record if any foreign key is invalid
             bool skipRecord = false;
             if (plantId.HasValue && !validPlantIds.Contains(plantId.Value))
             {
-                _logger.LogWarning($"Skipping record: plant_id={plantId} not found in plant_master");
+                migrationLogger.LogSkipped($"plant_id={plantId} not found in plant_master", arcPlantId);
                 skipRecord = true;
             }
             if (arcHeaderId.HasValue && !validArcHeaderIds.Contains(arcHeaderId.Value))
             {
-                _logger.LogWarning($"Skipping record: arc_header_id={arcHeaderId} not found in arc_header");
+                migrationLogger.LogSkipped($"arc_header_id={arcHeaderId} not found in arc_header", arcPlantId);
                 skipRecord = true;
             }
             if (paymentTermId.HasValue && !validPaymentTermIds.Contains(paymentTermId.Value))
             {
-                _logger.LogWarning($"Skipping record: payment_term_id={paymentTermId} not found in payment_term_master");
+                migrationLogger.LogSkipped($"payment_term_id={paymentTermId} not found in payment_term_master", arcPlantId);
                 skipRecord = true;
             }
             if (incotermId.HasValue && !validIncotermIds.Contains(incotermId.Value))
             {
-                _logger.LogWarning($"Skipping record: incoterm_id={incotermId} not found in incoterm_master");
+                migrationLogger.LogSkipped($"incoterm_id={incotermId} not found in incoterm_master", arcPlantId);
                 skipRecord = true;
             }
             if (supplierId.HasValue && !validSupplierIds.Contains(supplierId.Value))
             {
-                _logger.LogWarning($"Skipping record: supplier_id={supplierId} not found in supplier_master");
+                migrationLogger.LogSkipped($"supplier_id={supplierId} not found in supplier_master", arcPlantId);
                 skipRecord = true;
             }
 
             if (skipRecord)
             {
-                skippedCount++;
                 continue;
             }
 
@@ -128,6 +134,8 @@ public class ARCPlantMigration : MigrationService
                 ["deleted_date"] = DBNull.Value
             };
             batch.Add(record);
+            migrationLogger.LogInserted(arcPlantId);
+            
             if (batch.Count >= BATCH_SIZE)
             {
                 batchNumber++;
@@ -144,7 +152,9 @@ public class ARCPlantMigration : MigrationService
             insertedCount += await InsertBatchAsync(pgConn, batch, transaction, batchNumber);
             _logger.LogInformation($"Completed batch {batchNumber}. Total records inserted so far: {insertedCount}");
         }
-        _logger.LogInformation($"Migration finished. Total records inserted: {insertedCount}, Skipped: {skippedCount}");
+        
+        var summary = migrationLogger.GetSummary();
+        _logger.LogInformation($"ARCPlant migration finished. {summary}");
         return insertedCount;
     }
 

@@ -6,11 +6,13 @@ using Npgsql;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Linq;
+using DataMigration.Services;
 
 public class SupplierTermsMigration : MigrationService
 {
     private const int BATCH_SIZE = 1000;
     private readonly ILogger<SupplierTermsMigration> _logger;
+    private readonly MigrationLogger migrationLogger;
 
     protected override string SelectQuery => @"
         SELECT
@@ -70,7 +72,10 @@ public class SupplierTermsMigration : MigrationService
     public SupplierTermsMigration(IConfiguration configuration, ILogger<SupplierTermsMigration> logger) : base(configuration)
     {
         _logger = logger;
+        migrationLogger = new MigrationLogger(_logger, "SupplierTerms");
     }
+
+    public MigrationLogger GetLogger() => migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -125,7 +130,6 @@ public class SupplierTermsMigration : MigrationService
 
         int totalRecords = 0;
         int migratedRecords = 0;
-        int skippedRecords = 0;
 
         try
         {
@@ -165,8 +169,7 @@ public class SupplierTermsMigration : MigrationService
                 // Skip if VENDORDEVIATIONMSTID is NULL
                 if (vendorDeviationMstId == DBNull.Value)
                 {
-                    skippedRecords++;
-                    _logger.LogWarning("Skipping record - VENDORDEVIATIONMSTID is NULL");
+                    migrationLogger.LogSkipped("NULL", "VENDORDEVIATIONMSTID is NULL");
                     continue;
                 }
 
@@ -175,7 +178,7 @@ public class SupplierTermsMigration : MigrationService
                 // Skip duplicates
                 if (processedIds.Contains(vendorDeviationMstIdValue))
                 {
-                    skippedRecords++;
+                    migrationLogger.LogSkipped("Duplicate record", vendorDeviationMstIdValue.ToString());
                     continue;
                 }
 
@@ -185,8 +188,7 @@ public class SupplierTermsMigration : MigrationService
                     int eventIdValue = Convert.ToInt32(eventId);
                     if (!validEventIds.Contains(eventIdValue))
                     {
-                        skippedRecords++;
-                        _logger.LogWarning($"Skipping VENDORDEVIATIONMSTID {vendorDeviationMstIdValue} - Invalid event_id: {eventIdValue}");
+                        migrationLogger.LogSkipped($"event_id={eventIdValue} not found in event_master", vendorDeviationMstIdValue.ToString());
                         continue;
                     }
                 }
@@ -197,8 +199,7 @@ public class SupplierTermsMigration : MigrationService
                     int vendorIdValue = Convert.ToInt32(vendorId);
                     if (!validSupplierIds.Contains(vendorIdValue))
                     {
-                        skippedRecords++;
-                        _logger.LogWarning($"Skipping VENDORDEVIATIONMSTID {vendorDeviationMstIdValue} - Invalid supplier_id: {vendorIdValue}");
+                        migrationLogger.LogSkipped($"supplier_id={vendorIdValue} not found in supplier_master", vendorDeviationMstIdValue.ToString());
                         continue;
                     }
                 }
@@ -206,8 +207,7 @@ public class SupplierTermsMigration : MigrationService
                 // Skip if user_term_id is NULL (NOT NULL constraint)
                 if (clauseEventWiseId == DBNull.Value)
                 {
-                    skippedRecords++;
-                    _logger.LogWarning($"Skipping VENDORDEVIATIONMSTID {vendorDeviationMstIdValue} - user_term_id is NULL");
+                    migrationLogger.LogSkipped("user_term_id is NULL", vendorDeviationMstIdValue.ToString());
                     continue;
                 }
 
@@ -215,8 +215,7 @@ public class SupplierTermsMigration : MigrationService
                 int clauseEventWiseIdValue = Convert.ToInt32(clauseEventWiseId);
                 if (!validUserTermIds.Contains(clauseEventWiseIdValue))
                 {
-                    skippedRecords++;
-                    _logger.LogWarning($"Skipping VENDORDEVIATIONMSTID {vendorDeviationMstIdValue} - Invalid user_term_id: {clauseEventWiseIdValue}");
+                    migrationLogger.LogSkipped($"user_term_id={clauseEventWiseIdValue} not found in user_term", vendorDeviationMstIdValue.ToString());
                     continue;
                 }
 
@@ -254,6 +253,7 @@ public class SupplierTermsMigration : MigrationService
 
                 batch.Add(record);
                 processedIds.Add(vendorDeviationMstIdValue);
+                migrationLogger.LogInserted(vendorDeviationMstIdValue.ToString());
 
                 if (batch.Count >= BATCH_SIZE)
                 {
@@ -270,7 +270,9 @@ public class SupplierTermsMigration : MigrationService
                 migratedRecords += batchMigrated;
             }
 
-            _logger.LogInformation($"Supplier Terms migration completed. Total: {totalRecords}, Migrated: {migratedRecords}, Skipped: {skippedRecords}");
+            // Log summary
+            var summary = migrationLogger.GetSummary();
+            _logger.LogInformation($"Supplier Terms migration completed. {summary}");
 
             return migratedRecords;
         }

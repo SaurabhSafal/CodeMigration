@@ -4,14 +4,25 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
+using Microsoft.Extensions.Logging;
+using DataMigration.Services;
 
 public class PlantMasterMigration : MigrationService
 {
+    private readonly ILogger<PlantMasterMigration> _logger;
+    private readonly MigrationLogger migrationLogger;
+
     protected override string SelectQuery => "SELECT PlantId, ClientSAPId, PlantCode, PlantName, CompanyCode, Location FROM TBL_PlantMaster";
     protected override string InsertQuery => @"INSERT INTO plant_master (plant_id, company_id, plant_code, plant_name, plant_company_code, plant_location, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) 
                                              VALUES (@plant_id, @company_id, @plant_code, @plant_name, @plant_company_code, @plant_location, @created_by, @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date)";
 
-    public PlantMasterMigration(IConfiguration configuration) : base(configuration) { }
+    public PlantMasterMigration(IConfiguration configuration, ILogger<PlantMasterMigration> logger) : base(configuration) 
+    { 
+        _logger = logger;
+        migrationLogger = new MigrationLogger(_logger, "plant_master");
+    }
+
+    public MigrationLogger GetLogger() => migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -49,11 +60,13 @@ public class PlantMasterMigration : MigrationService
             pgCmd.Transaction = transaction;
         }
 
-        int insertedCount = 0;
         while (await reader.ReadAsync())
         {
+            var plantId = reader["PlantId"];
+            var recordId = $"ID={plantId}";
+            
             pgCmd.Parameters.Clear();
-            pgCmd.Parameters.AddWithValue("@plant_id", reader["PlantId"]);
+            pgCmd.Parameters.AddWithValue("@plant_id", plantId);
             pgCmd.Parameters.AddWithValue("@company_id", reader["ClientSAPId"]);
             pgCmd.Parameters.AddWithValue("@plant_code", reader["PlantCode"]);
             pgCmd.Parameters.AddWithValue("@plant_name", reader["PlantName"]);
@@ -67,8 +80,15 @@ public class PlantMasterMigration : MigrationService
             pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value);
             pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value);
             int result = await pgCmd.ExecuteNonQueryAsync();
-            if (result > 0) insertedCount++;
+            if (result > 0)
+            {
+                migrationLogger.LogInserted(recordId);
+            }
         }
-        return insertedCount;
+        
+        var summary = migrationLogger.GetSummary();
+        _logger.LogInformation($"Plant Master Migration completed. Inserted: {summary.TotalInserted}, Skipped: {summary.TotalSkipped}");
+        
+        return summary.TotalInserted;
     }
 }

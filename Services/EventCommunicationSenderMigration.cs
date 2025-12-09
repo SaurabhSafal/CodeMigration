@@ -7,6 +7,7 @@ namespace DataMigration.Services
     public class EventCommunicationSenderMigration
     {
         private readonly ILogger<EventCommunicationSenderMigration> _logger;
+        private MigrationLogger? _migrationLogger;
         private readonly IConfiguration _configuration;
 
         public EventCommunicationSenderMigration(IConfiguration configuration, ILogger<EventCommunicationSenderMigration> logger)
@@ -14,6 +15,8 @@ namespace DataMigration.Services
             _configuration = configuration;
             _logger = logger;
         }
+
+        public MigrationLogger? GetLogger() => _migrationLogger;
 
         public List<object> GetMappings()
         {

@@ -1,12 +1,14 @@
 using Microsoft.Data.SqlClient;
 using Npgsql;
 using System.Data;
-
+using DataMigration.Services;
+using Microsoft.Extensions.Logging;
 namespace DataMigration.Services
 {
     public class EventCommunicationReceiverMigration
     {
         private readonly ILogger<EventCommunicationReceiverMigration> _logger;
+        private MigrationLogger? _migrationLogger;
         private readonly IConfiguration _configuration;
 
         public EventCommunicationReceiverMigration(IConfiguration configuration, ILogger<EventCommunicationReceiverMigration> logger)
@@ -14,6 +16,8 @@ namespace DataMigration.Services
             _configuration = configuration;
             _logger = logger;
         }
+
+        public MigrationLogger? GetLogger() => _migrationLogger;
 
         public List<object> GetMappings()
         {

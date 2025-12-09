@@ -4,14 +4,25 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
+using Microsoft.Extensions.Logging;
+using DataMigration.Services;
 
 public class PurchaseGroupMasterMigration : MigrationService
 {
+    private readonly ILogger<PurchaseGroupMasterMigration> _logger;
+    private readonly MigrationLogger migrationLogger;
+
     protected override string SelectQuery => "SELECT PurchaseGroupId, ClientSAPId, PurchaseGroupCode, PurchaseGroupName FROM TBL_PurchaseGroupMaster";
     protected override string InsertQuery => @"INSERT INTO purchase_group_master (purchase_group_id, company_id, purchase_group_code, purchase_group_name, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) 
                                              VALUES (@purchase_group_id, @company_id, @purchase_group_code, @purchase_group_name, @created_by, @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date)";
 
-    public PurchaseGroupMasterMigration(IConfiguration configuration) : base(configuration) { }
+    public PurchaseGroupMasterMigration(IConfiguration configuration, ILogger<PurchaseGroupMasterMigration> logger) : base(configuration) 
+    { 
+        _logger = logger;
+        migrationLogger = new MigrationLogger(_logger, "purchase_group_master");
+    }
+
+    public MigrationLogger GetLogger() => migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -47,24 +58,33 @@ public class PurchaseGroupMasterMigration : MigrationService
             pgCmd.Transaction = transaction;
         }
 
-        int insertedCount = 0;
         while (await reader.ReadAsync())
         {
+            var purchaseGroupId = reader["PurchaseGroupId"];
+            var recordId = $"ID={purchaseGroupId}";
+            
             pgCmd.Parameters.Clear();
-            pgCmd.Parameters.AddWithValue("@purchase_group_id", reader["PurchaseGroupId"]);
+            pgCmd.Parameters.AddWithValue("@purchase_group_id", purchaseGroupId);
             pgCmd.Parameters.AddWithValue("@company_id", reader["ClientSAPId"]);
             pgCmd.Parameters.AddWithValue("@purchase_group_code", reader["PurchaseGroupCode"]);
             pgCmd.Parameters.AddWithValue("@purchase_group_name", reader["PurchaseGroupName"]);
-            pgCmd.Parameters.AddWithValue("@created_by", 0); // Default: 0
-            pgCmd.Parameters.AddWithValue("@created_date", DateTime.UtcNow); // Default: Now
-            pgCmd.Parameters.AddWithValue("@modified_by", DBNull.Value); // Default: null
-            pgCmd.Parameters.AddWithValue("@modified_date", DBNull.Value); // Default: null
-            pgCmd.Parameters.AddWithValue("@is_deleted", false); // Default: false
-            pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value); // Default: null
-            pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value); // Default: null
+            pgCmd.Parameters.AddWithValue("@created_by", 0);
+            pgCmd.Parameters.AddWithValue("@created_date", DateTime.UtcNow);
+            pgCmd.Parameters.AddWithValue("@modified_by", DBNull.Value);
+            pgCmd.Parameters.AddWithValue("@modified_date", DBNull.Value);
+            pgCmd.Parameters.AddWithValue("@is_deleted", false);
+            pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value);
+            pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value);
             int result = await pgCmd.ExecuteNonQueryAsync();
-            if (result > 0) insertedCount++;
+            if (result > 0)
+            {
+                migrationLogger.LogInserted(recordId);
+            }
         }
-        return insertedCount;
+        
+        var summary = migrationLogger.GetSummary();
+        _logger.LogInformation($"Purchase Group Master Migration completed. Inserted: {summary.TotalInserted}, Skipped: {summary.TotalSkipped}");
+        
+        return summary.TotalInserted;
     }
 }

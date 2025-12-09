@@ -4,14 +4,25 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
+using Microsoft.Extensions.Logging;
+using DataMigration.Services;
 
 public class UOMMasterMigration : MigrationService
 {
+    private readonly ILogger<UOMMasterMigration> _logger;
+    private readonly MigrationLogger migrationLogger;
+
     protected override string SelectQuery => "SELECT UOM_MAST_ID, ClientSAPId, UOMCODE, UOMNAME FROM TBL_UOM_MASTER";
     protected override string InsertQuery => @"INSERT INTO uom_master (uom_id, company_id, uom_code, uom_name, created_by, created_date) 
                                              VALUES (@uom_id, CASE WHEN @company_id IS NULL THEN NULL ELSE @company_id END, @uom_code, @uom_name, @created_by, @created_date)";
 
-    public UOMMasterMigration(IConfiguration configuration) : base(configuration) { }
+    public UOMMasterMigration(IConfiguration configuration, ILogger<UOMMasterMigration> logger) : base(configuration) 
+    { 
+        _logger = logger;
+        migrationLogger = new MigrationLogger(_logger, "uom_master");
+    }
+
+    public MigrationLogger GetLogger() => migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -42,19 +53,28 @@ public class UOMMasterMigration : MigrationService
             pgCmd.Transaction = transaction;
         }
 
-        int insertedCount = 0;
         while (await reader.ReadAsync())
         {
+            var uomId = reader["UOM_MAST_ID"];
+            var recordId = $"ID={uomId}";
+            
             pgCmd.Parameters.Clear();
-            pgCmd.Parameters.AddWithValue("@uom_id", reader["UOM_MAST_ID"]);
+            pgCmd.Parameters.AddWithValue("@uom_id", uomId);
             pgCmd.Parameters.AddWithValue("@company_id", reader["ClientSAPId"]);
             pgCmd.Parameters.AddWithValue("@uom_code", reader["UOMCODE"]);
             pgCmd.Parameters.AddWithValue("@uom_name", reader["UOMNAME"]);
             pgCmd.Parameters.AddWithValue("@created_by", 0);
             pgCmd.Parameters.AddWithValue("@created_date", DateTime.UtcNow);
             int result = await pgCmd.ExecuteNonQueryAsync();
-            if (result > 0) insertedCount++;
+            if (result > 0)
+            {
+                migrationLogger.LogInserted(recordId);
+            }
         }
-        return insertedCount;
+        
+        var summary = migrationLogger.GetSummary();
+        _logger.LogInformation($"UOM Master Migration completed. Inserted: {summary.TotalInserted}, Skipped: {summary.TotalSkipped}");
+        
+        return summary.TotalInserted;
     }
 }

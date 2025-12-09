@@ -4,14 +4,25 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
+using Microsoft.Extensions.Logging;
+using DataMigration.Services;
 
 public class CountryMasterMigration : MigrationService
 {
+    private readonly ILogger<CountryMasterMigration> _logger;
+    private readonly MigrationLogger migrationLogger;
+
     protected override string SelectQuery => "SELECT CountryMasterID, Country_NAME, Country_Shname, ISO, ISO3, NumberCode, PhoneCode FROM TBL_COUNTRYMASTER";
     protected override string InsertQuery => @"INSERT INTO country_master (countryid, countryname, countrycode, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) 
                                              VALUES (@countryid, @countryname, @countrycode, @created_by, @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date)";
 
-    public CountryMasterMigration(IConfiguration configuration) : base(configuration) { }
+    public CountryMasterMigration(IConfiguration configuration, ILogger<CountryMasterMigration> logger) : base(configuration) 
+    { 
+        _logger = logger;
+        migrationLogger = new MigrationLogger(_logger, "country_master");
+    }
+
+    public MigrationLogger GetLogger() => migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -64,14 +75,10 @@ public class CountryMasterMigration : MigrationService
             pgCmd.Transaction = transaction;
         }
 
-        int insertedCount = 0;
-        int processedCount = 0;
-        
         try
         {
             while (await reader.ReadAsync())
             {
-                processedCount++;
                 try
                 {
                     // Validate field values before processing
@@ -79,16 +86,18 @@ public class CountryMasterMigration : MigrationService
                     var countryName = reader.IsDBNull(reader.GetOrdinal("Country_NAME")) ? "" : reader["Country_NAME"].ToString();
                     var countryCode = reader.IsDBNull(reader.GetOrdinal("Country_Shname")) ? "" : reader["Country_Shname"].ToString();
 
+                    var recordId = $"ID={countryMasterId}";
+
                     // Validate required fields
                     if (string.IsNullOrWhiteSpace(countryName))
                     {
-                        Console.WriteLine($"Skipping record {processedCount} (CountryMasterID: {countryMasterId}) - Country_NAME is null or empty");
+                        migrationLogger.LogSkipped("Country_NAME is null or empty", recordId);
                         continue;
                     }
 
                     if (string.IsNullOrWhiteSpace(countryCode))
                     {
-                        Console.WriteLine($"Skipping record {processedCount} (CountryMasterID: {countryMasterId}) - Country_Shname is null or empty");
+                        migrationLogger.LogSkipped("Country_Shname is null or empty", recordId);
                         continue;
                     }
 
@@ -105,11 +114,16 @@ public class CountryMasterMigration : MigrationService
                     pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value); // Default: null
                     
                     int result = await pgCmd.ExecuteNonQueryAsync();
-                    if (result > 0) insertedCount++;
+                    if (result > 0)
+                    {
+                        migrationLogger.LogInserted(recordId);
+                    }
                 }
                 catch (Exception recordEx)
                 {
-                    throw new Exception($"Error processing record {processedCount} in Country Master Migration: {recordEx.Message}", recordEx);
+                    var countryMasterId = reader.IsDBNull(reader.GetOrdinal("CountryMasterID")) ? 0 : Convert.ToInt32(reader["CountryMasterID"]);
+                    migrationLogger.LogError($"Error processing record: {recordEx.Message}", $"ID={countryMasterId}", recordEx);
+                    throw new Exception($"Error processing record ID={countryMasterId} in Country Master Migration: {recordEx.Message}", recordEx);
                 }
             }
         }
@@ -118,22 +132,25 @@ public class CountryMasterMigration : MigrationService
             // Check if it's a connection or stream issue
             if (readerEx.Message.Contains("reading from stream") || readerEx.Message.Contains("connection") || readerEx.Message.Contains("timeout"))
             {
-                throw new Exception($"SQL Server connection issue during Country Master Migration after processing {processedCount} records. " +
+                throw new Exception($"SQL Server connection issue during Country Master Migration after processing {migrationLogger.ProcessedCount} records. " +
                                   $"This could be due to: 1) Network connectivity issues, 2) SQL Server timeout, 3) Large dataset causing memory issues, " +
                                   $"4) Connection string issues. Original error: {readerEx.Message}", readerEx);
             }
             else if (readerEx.Message.Contains("constraint") || readerEx.Message.Contains("foreign key") || readerEx.Message.Contains("violates"))
             {
-                throw new Exception($"Database constraint violation during Country Master Migration at record {processedCount}. " +
+                throw new Exception($"Database constraint violation during Country Master Migration at record {migrationLogger.ProcessedCount}. " +
                                   $"This could be due to: 1) Duplicate primary keys, " +
                                   $"2) Invalid data values. Original error: {readerEx.Message}", readerEx);
             }
             else
             {
-                throw new Exception($"Unexpected error during Country Master Migration at record {processedCount}: {readerEx.Message}", readerEx);
+                throw new Exception($"Unexpected error during Country Master Migration at record {migrationLogger.ProcessedCount}: {readerEx.Message}", readerEx);
             }
         }
         
-        return insertedCount;
+        var summary = migrationLogger.GetSummary();
+        _logger.LogInformation($"Country Master Migration completed. Inserted: {summary.TotalInserted}, Skipped: {summary.TotalSkipped}, Errors: {summary.TotalErrors}");
+        
+        return summary.TotalInserted;
     }
 }

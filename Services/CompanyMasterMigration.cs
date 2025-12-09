@@ -4,10 +4,22 @@ using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
 using Microsoft.Extensions.Configuration;
+using DataMigration.Services;
 
 public class CompanyMasterMigration : MigrationService
 {
     // SQL Server: TBL_CLIENTSAPMASTER -> PostgreSQL: company_master
+    private readonly ILogger<CompanyMasterMigration> _logger;
+    private MigrationLogger? _migrationLogger;
+
+    public CompanyMasterMigration(IConfiguration configuration, ILogger<CompanyMasterMigration> logger)
+        : base(configuration)
+    {
+        _logger = logger;
+    }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
+
     protected override string SelectQuery => @"
         SELECT 
             ClientSAPId,

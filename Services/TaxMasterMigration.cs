@@ -4,9 +4,14 @@ using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using DataMigration.Services;
 
 public class TaxMasterMigration : MigrationService
 {
+    private readonly ILogger<TaxMasterMigration> _logger;
+    private readonly MigrationLogger migrationLogger;
+
     protected override string SelectQuery => "SELECT TaxId, TaxName, TaxPer FROM TBL_TaxMaster";
     protected override string InsertQuery => @"
         INSERT INTO tax_master 
@@ -14,7 +19,13 @@ public class TaxMasterMigration : MigrationService
         VALUES 
             (@tax_master_id, @tax_name, @tax_percentage, @created_by, @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date)";
 
-    public TaxMasterMigration(IConfiguration configuration) : base(configuration) { }
+    public TaxMasterMigration(IConfiguration configuration, ILogger<TaxMasterMigration> logger) : base(configuration) 
+    { 
+        _logger = logger;
+        migrationLogger = new MigrationLogger(_logger, "tax_master");
+    }
+
+    public MigrationLogger GetLogger() => migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -49,11 +60,13 @@ public class TaxMasterMigration : MigrationService
             pgCmd.Transaction = transaction;
         }
 
-        int insertedCount = 0;
         while (await reader.ReadAsync())
         {
+            var taxId = reader["TaxId"];
+            var recordId = $"ID={taxId}";
+            
             pgCmd.Parameters.Clear();
-            pgCmd.Parameters.AddWithValue("@tax_master_id", reader["TaxId"]);
+            pgCmd.Parameters.AddWithValue("@tax_master_id", taxId);
             pgCmd.Parameters.AddWithValue("@tax_name", reader["TaxName"]);
             pgCmd.Parameters.AddWithValue("@tax_percentage", reader["TaxPer"]);
             pgCmd.Parameters.AddWithValue("@created_by", 0);
@@ -64,8 +77,15 @@ public class TaxMasterMigration : MigrationService
             pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value);
             pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value);
             int result = await pgCmd.ExecuteNonQueryAsync();
-            if (result > 0) insertedCount++;
+            if (result > 0)
+            {
+                migrationLogger.LogInserted(recordId);
+            }
         }
-        return insertedCount;
+        
+        var summary = migrationLogger.GetSummary();
+        _logger.LogInformation($"Tax Master Migration completed. Inserted: {summary.TotalInserted}, Skipped: {summary.TotalSkipped}");
+        
+        return summary.TotalInserted;
     }
 }

@@ -7,6 +7,7 @@ namespace DataMigration.Services
     public class EventCommunicationAttachmentMigration
     {
         private readonly ILogger<EventCommunicationAttachmentMigration> _logger;
+        private MigrationLogger? _migrationLogger;
         private readonly IConfiguration _configuration;
 
         public EventCommunicationAttachmentMigration(IConfiguration configuration, ILogger<EventCommunicationAttachmentMigration> logger)
@@ -14,6 +15,8 @@ namespace DataMigration.Services
             _configuration = configuration;
             _logger = logger;
         }
+
+        public MigrationLogger? GetLogger() => _migrationLogger;
 
         public List<object> GetMappings()
         {
@@ -31,11 +34,15 @@ namespace DataMigration.Services
 
         public async Task<int> MigrateAsync()
         {
+            _migrationLogger = new MigrationLogger(_logger, "event_communication_attachment");
+            _migrationLogger.LogInfo("Starting EventCommunicationAttachment migration");
+
             var sqlConnectionString = _configuration.GetConnectionString("SqlServer");
             var pgConnectionString = _configuration.GetConnectionString("PostgreSql");
 
             if (string.IsNullOrEmpty(sqlConnectionString) || string.IsNullOrEmpty(pgConnectionString))
             {
+                _migrationLogger.LogError("Database connection strings are not configured properly.", "N/A");
                 throw new InvalidOperationException("Database connection strings are not configured properly.");
             }
 
@@ -50,14 +57,13 @@ namespace DataMigration.Services
                 await sqlConnection.OpenAsync();
                 await pgConnection.OpenAsync();
 
-                _logger.LogInformation("Starting EventCommunicationAttachment migration...");
+                _migrationLogger.LogInfo("Resetting event_communication_attachment table and restarting identity sequence");
 
                 // Truncate and restart identity
                 using (var cmd = new NpgsqlCommand(@"
                     TRUNCATE TABLE event_communication_attachment RESTART IDENTITY CASCADE;", pgConnection))
                 {
                     await cmd.ExecuteNonQueryAsync();
-                    _logger.LogInformation("Reset event_communication_attachment table and restarted identity sequence");
                 }
 
                 // Build lookup for valid event_ids from PostgreSQL
@@ -73,10 +79,9 @@ namespace DataMigration.Services
                         validEventIds.Add(reader.GetInt32(0));
                     }
                 }
-                _logger.LogInformation($"Built event_id lookup with {validEventIds.Count} entries");
+                _migrationLogger.LogInfo($"Built event_id lookup with {validEventIds.Count} entries");
 
                 // Build lookup for valid ec_senderids from PostgreSQL
-                // ec_senderid preserves the original MailMsgMainId from SQL Server
                 var validEcSenderIds = new HashSet<int>();
                 int minEcSenderId = int.MaxValue;
                 int maxEcSenderId = int.MinValue;
@@ -94,13 +99,12 @@ namespace DataMigration.Services
                         if (id > maxEcSenderId) maxEcSenderId = id;
                     }
                 }
-                _logger.LogInformation($"Built ec_senderid lookup with {validEcSenderIds.Count} entries from event_communication_sender (range: {minEcSenderId} to {maxEcSenderId})");
-                
-                // Log some sample ec_senderids for debugging
+                _migrationLogger.LogInfo($"Built ec_senderid lookup with {validEcSenderIds.Count} entries from event_communication_sender (range: {minEcSenderId} to {maxEcSenderId})");
+
                 if (validEcSenderIds.Any())
                 {
                     var sampleIds = validEcSenderIds.Take(10).OrderBy(x => x);
-                    _logger.LogInformation($"Sample ec_senderid values in PostgreSQL: {string.Join(", ", sampleIds)}");
+                    _migrationLogger.LogDebug($"Sample ec_senderid values in PostgreSQL: {string.Join(", ", sampleIds)}");
                 }
 
                 // Build lookup for valid user_ids from PostgreSQL
@@ -116,7 +120,7 @@ namespace DataMigration.Services
                         validUserIds.Add(reader.GetInt32(0));
                     }
                 }
-                _logger.LogInformation($"Built user_id lookup with {validUserIds.Count} entries");
+                _migrationLogger.LogInfo($"Built user_id lookup with {validUserIds.Count} entries");
 
                 // Build lookup dictionary from TBL_MAILMSGMAIN for DocumentId -> (EventId, MailMsgMainId, FromUserId)
                 var documentLookup = new Dictionary<string, DocumentInfo>();
@@ -149,30 +153,28 @@ namespace DataMigration.Services
                         }
                     }
                 }
-                _logger.LogInformation($"Built document lookup with {documentLookup.Count} entries from TBL_MAILMSGMAIN");
-                
-                // Log first few entries for debugging
+                _migrationLogger.LogInfo($"Built document lookup with {documentLookup.Count} entries from TBL_MAILMSGMAIN");
+
                 if (documentLookup.Any())
                 {
                     var sample = documentLookup.Take(3).Select(kvp => $"'{kvp.Key}' -> MailMsgMainId:{kvp.Value.MailMsgMainId}");
-                    _logger.LogInformation($"Sample DocumentId mappings: {string.Join(", ", sample)}");
-                    
-                    // Check how many MailMsgMainIds from TBL_MAILMSGMAIN exist in event_communication_sender
+                    _migrationLogger.LogDebug($"Sample DocumentId mappings: {string.Join(", ", sample)}");
+
                     var mailMsgMainIds = documentLookup.Values.Select(v => v.MailMsgMainId).Distinct().ToList();
                     var foundInPg = mailMsgMainIds.Count(id => validEcSenderIds.Contains(id));
                     var missingInPg = mailMsgMainIds.Count - foundInPg;
-                    _logger.LogInformation($"TBL_MAILMSGMAIN analysis: {mailMsgMainIds.Count} unique MailMsgMainIds, {foundInPg} found in PostgreSQL, {missingInPg} missing");
-                    
+                    _migrationLogger.LogInfo($"TBL_MAILMSGMAIN analysis: {mailMsgMainIds.Count} unique MailMsgMainIds, {foundInPg} found in PostgreSQL, {missingInPg} missing");
+
                     if (missingInPg > 0)
                     {
                         var missingIds = mailMsgMainIds.Where(id => !validEcSenderIds.Contains(id)).Take(10);
-                        _logger.LogWarning($"Sample missing MailMsgMainIds (not in event_communication_sender): {string.Join(", ", missingIds)}");
+                        _migrationLogger.LogSkipped($"Sample missing MailMsgMainIds (not in event_communication_sender): {string.Join(", ", missingIds)}");
                     }
                 }
 
                 // Fetch source data
                 var sourceData = new List<SourceRow>();
-                
+
                 using (var cmd = new SqlCommand(@"
                     SELECT 
                         MailDocId,
@@ -200,19 +202,17 @@ namespace DataMigration.Services
                     }
                 }
 
-                _logger.LogInformation($"Fetched {sourceData.Count} records from TBL_MailAttachment");
-                
-                // Log first few DocNo values for debugging
+                _migrationLogger.LogInfo($"Fetched {sourceData.Count} records from TBL_MailAttachment");
+
                 if (sourceData.Any())
                 {
                     var sampleDocNos = sourceData.Take(5).Where(s => !string.IsNullOrWhiteSpace(s.DocNo))
                         .Select(s => $"MailDocId:{s.MailDocId} -> DocNo:'{s.DocNo}'");
-                    _logger.LogInformation($"Sample DocNo values: {string.Join(", ", sampleDocNos)}");
+                    _migrationLogger.LogDebug($"Sample DocNo values: {string.Join(", ", sampleDocNos)}");
                 }
-                
-                // Count how many attachments have DocNo that maps to DocumentId
+
                 var attachmentsWithValidDocNo = sourceData.Count(r => !string.IsNullOrWhiteSpace(r.DocNo) && documentLookup.ContainsKey(r.DocNo.Trim()));
-                _logger.LogInformation($"Attachments with valid DocNo mapping: {attachmentsWithValidDocNo} out of {sourceData.Count}");
+                _migrationLogger.LogInfo($"Attachments with valid DocNo mapping: {attachmentsWithValidDocNo} out of {sourceData.Count}");
 
                 const int batchSize = 500;
                 var insertBatch = new List<TargetRow>();
@@ -221,7 +221,6 @@ namespace DataMigration.Services
                 {
                     try
                     {
-                        // Lookup event_id and ec_senderid using DocNo
                         int? eventId = null;
                         int? ecSenderId = null;
                         int? uploadedBy = null;
@@ -237,68 +236,96 @@ namespace DataMigration.Services
                             }
                             else
                             {
-                                _logger.LogWarning($"Skipping MailDocId {record.MailDocId}: DocNo='{trimmedDocNo}' (length:{trimmedDocNo.Length}) not found in TBL_MAILMSGMAIN DocumentId lookup");
                                 skippedRecords++;
+                                _migrationLogger.LogSkipped(
+                                    "DocNo not found in TBL_MAILMSGMAIN DocumentId lookup",
+                                    $"MailDocId={record.MailDocId}",
+                                    new Dictionary<string, object> { { "DocNo", trimmedDocNo }, { "DocNoLength", trimmedDocNo.Length } }
+                                );
                                 continue;
                             }
                         }
                         else
                         {
-                            _logger.LogWarning($"Skipping MailDocId {record.MailDocId}: DocNo is null/empty");
                             skippedRecords++;
+                            _migrationLogger.LogSkipped(
+                                "DocNo is null/empty",
+                                $"MailDocId={record.MailDocId}"
+                            );
                             continue;
                         }
 
-                        // Validate event_id (REQUIRED - NOT NULL)
                         if (!eventId.HasValue)
                         {
-                            _logger.LogWarning($"Skipping MailDocId {record.MailDocId}: event_id lookup returned null for DocNo={record.DocNo}");
                             skippedRecords++;
+                            _migrationLogger.LogSkipped(
+                                "event_id lookup returned null for DocNo",
+                                $"MailDocId={record.MailDocId}",
+                                new Dictionary<string, object> { { "DocNo", record.DocNo } }
+                            );
                             continue;
                         }
 
                         if (!validEventIds.Contains(eventId.Value))
                         {
-                            _logger.LogWarning($"Skipping MailDocId {record.MailDocId}: event_id={eventId} not found in event_master");
                             skippedRecords++;
+                            _migrationLogger.LogSkipped(
+                                $"event_id={eventId} not found in event_master",
+                                $"MailDocId={record.MailDocId}",
+                                new Dictionary<string, object> { { "event_id", eventId } }
+                            );
                             continue;
                         }
 
-                        // Validate ec_senderid (REQUIRED - NOT NULL)
                         if (!ecSenderId.HasValue)
                         {
-                            _logger.LogWarning($"Skipping MailDocId {record.MailDocId}: ec_senderid lookup returned null for DocNo={record.DocNo}");
                             skippedRecords++;
+                            _migrationLogger.LogSkipped(
+                                "ec_senderid lookup returned null for DocNo",
+                                $"MailDocId={record.MailDocId}",
+                                new Dictionary<string, object> { { "DocNo", record.DocNo } }
+                            );
                             continue;
                         }
 
                         if (!validEcSenderIds.Contains(ecSenderId.Value))
                         {
-                            _logger.LogWarning($"Skipping MailDocId {record.MailDocId}: ec_senderid={ecSenderId} not found in event_communication_sender");
                             skippedRecords++;
+                            _migrationLogger.LogSkipped(
+                                $"ec_senderid={ecSenderId} not found in event_communication_sender",
+                                $"MailDocId={record.MailDocId}",
+                                new Dictionary<string, object> { { "ec_senderid", ecSenderId } }
+                            );
                             continue;
                         }
 
-                        // Validate uploaded_by (OPTIONAL - can be NULL)
                         if (uploadedBy.HasValue && !validUserIds.Contains(uploadedBy.Value))
                         {
-                            _logger.LogWarning($"MailDocId {record.MailDocId}: uploaded_by={uploadedBy} not found in users, setting to NULL");
+                            _migrationLogger.LogSkipped(
+                                $"uploaded_by={uploadedBy} not found in users, setting to NULL",
+                                $"MailDocId={record.MailDocId}",
+                                new Dictionary<string, object> { { "uploaded_by", uploadedBy } }
+                            );
                             uploadedBy = null;
                         }
 
-                        // Validate required text fields (NOT NULL constraints)
                         if (string.IsNullOrWhiteSpace(record.FileName))
                         {
-                            _logger.LogWarning($"Skipping MailDocId {record.MailDocId}: FileName is null/empty");
                             skippedRecords++;
+                            _migrationLogger.LogSkipped(
+                                "FileName is null/empty",
+                                $"MailDocId={record.MailDocId}"
+                            );
                             continue;
                         }
 
-                        // Type becomes file_type (NOT NULL)
                         if (string.IsNullOrWhiteSpace(record.Type))
                         {
-                            _logger.LogWarning($"Skipping MailDocId {record.MailDocId}: Type is null/empty");
                             skippedRecords++;
+                            _migrationLogger.LogSkipped(
+                                "Type is null/empty",
+                                $"MailDocId={record.MailDocId}"
+                            );
                             continue;
                         }
 
@@ -306,49 +333,61 @@ namespace DataMigration.Services
                         {
                             EventId = eventId.Value,
                             EcSenderId = ecSenderId.Value,
-                            UploadPath = string.IsNullOrWhiteSpace(record.UploadPath) ? "" : record.UploadPath, // Default blank
+                            UploadPath = string.IsNullOrWhiteSpace(record.UploadPath) ? "" : record.UploadPath,
                             FileName = record.FileName,
                             FileType = record.Type,
                             UploadedBy = uploadedBy
                         };
 
                         insertBatch.Add(targetRow);
-                        migratedRecords++;
 
                         if (insertBatch.Count >= batchSize)
                         {
                             await ExecuteInsertBatch(pgConnection, insertBatch);
+                            foreach (var row in insertBatch)
+                            {
+                                migratedRecords++;
+                                _migrationLogger.LogInserted($"event_id={row.EventId}, ec_senderid={row.EcSenderId}, file_name={row.FileName}");
+                            }
                             insertBatch.Clear();
                         }
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError($"Error processing MailDocId {record.MailDocId}: {ex.Message}");
                         skippedRecords++;
+                        _migrationLogger.LogError(
+                            $"Error processing MailDocId {record.MailDocId}: {ex.Message}",
+                            $"MailDocId={record.MailDocId}",
+                            ex
+                        );
                     }
                 }
 
                 if (insertBatch.Any())
                 {
                     await ExecuteInsertBatch(pgConnection, insertBatch);
+                    foreach (var row in insertBatch)
+                    {
+                        migratedRecords++;
+                        _migrationLogger.LogInserted($"event_id={row.EventId}, ec_senderid={row.EcSenderId}, file_name={row.FileName}");
+                    }
                 }
 
-                _logger.LogInformation($"Migration completed. Migrated: {migratedRecords}, Skipped: {skippedRecords}");
-                
-                // Log skip summary if all records were skipped
+                _migrationLogger.LogInfo($"Migration completed. Migrated: {migratedRecords}, Skipped: {skippedRecords}");
+
                 if (migratedRecords == 0 && skippedRecords > 0)
                 {
-                    _logger.LogError($"CRITICAL: All {skippedRecords} attachment records were skipped! Common reasons:");
-                    _logger.LogError("1. DocNo values don't match DocumentId in TBL_MAILMSGMAIN");
-                    _logger.LogError("2. Parent sender records (MailMsgMainId) were not migrated to event_communication_sender");
-                    _logger.LogError("3. Referenced event_ids or user_ids don't exist in PostgreSQL");
-                    _logger.LogError("ACTION: Review EventCommunicationSenderMigration logs to see why sender records were skipped");
-                    _logger.LogError($"ACTION: Run this SQL query in MSSQL to check data: SELECT COUNT(*) FROM TBL_MailAttachment WHERE DocNo IN (SELECT DocumentId FROM TBL_MAILMSGMAIN)");
+                    _migrationLogger.LogError($"CRITICAL: All {skippedRecords} attachment records were skipped! Common reasons:", "ALL_SKIPPED");
+                    _migrationLogger.LogError("1. DocNo values don't match DocumentId in TBL_MAILMSGMAIN", "ALL_SKIPPED");
+                    _migrationLogger.LogError("2. Parent sender records (MailMsgMainId) were not migrated to event_communication_sender", "ALL_SKIPPED");
+                    _migrationLogger.LogError("3. Referenced event_ids or user_ids don't exist in PostgreSQL", "ALL_SKIPPED");
+                    _migrationLogger.LogError("ACTION: Review EventCommunicationSenderMigration logs to see why sender records were skipped", "ALL_SKIPPED");
+                    _migrationLogger.LogError("ACTION: Run this SQL query in MSSQL to check data: SELECT COUNT(*) FROM TBL_MailAttachment WHERE DocNo IN (SELECT DocumentId FROM TBL_MAILMSGMAIN)", "ALL_SKIPPED");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Migration failed");
+                _migrationLogger.LogError("Migration failed", "MIGRATION", ex);
                 throw;
             }
 
@@ -374,7 +413,7 @@ namespace DataMigration.Services
             {
                 var row = batch[i];
                 values.Add($"(@EventId{i}, @EcSenderId{i}, @UploadPath{i}, @FileName{i}, @FileType{i}, @UploadedBy{i}, NULL, CURRENT_TIMESTAMP, NULL, NULL, false, NULL, NULL)");
-                
+
                 cmd.Parameters.AddWithValue($"@EventId{i}", row.EventId);
                 cmd.Parameters.AddWithValue($"@EcSenderId{i}", row.EcSenderId);
                 cmd.Parameters.AddWithValue($"@UploadPath{i}", row.UploadPath);
@@ -389,11 +428,11 @@ namespace DataMigration.Services
             try
             {
                 var rowsAffected = await cmd.ExecuteNonQueryAsync();
-                _logger.LogDebug($"Batch inserted {rowsAffected} records");
+                _migrationLogger?.LogDebug($"Batch inserted {rowsAffected} records");
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Batch insert failed: {ex.Message}");
+                _migrationLogger?.LogError($"Batch insert failed: {ex.Message}", "BATCH_INSERT", ex);
                 throw;
             }
         }

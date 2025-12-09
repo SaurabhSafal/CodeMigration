@@ -5,15 +5,26 @@ using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
+using Microsoft.Extensions.Logging;
+using DataMigration.Services;
 
 public class IncotermMasterMigration : MigrationService
 {
+    private readonly ILogger<IncotermMasterMigration> _logger;
+    private readonly MigrationLogger migrationLogger;
+
     protected override string SelectQuery => "SELECT IncoID, IncoCode, IncoDescription, ClientSAPId FROM TBL_IncotermMASTER";
     
     protected override string InsertQuery => @"INSERT INTO incoterm_master (incoterm_id, incoterm_code, incoterm_name, company_id, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) 
                                              VALUES (@incoterm_id, @incoterm_code, @incoterm_name, @company_id, @created_by, @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date)";
 
-    public IncotermMasterMigration(IConfiguration configuration) : base(configuration) { }
+    public IncotermMasterMigration(IConfiguration configuration, ILogger<IncotermMasterMigration> logger) : base(configuration) 
+    { 
+        _logger = logger;
+        migrationLogger = new MigrationLogger(_logger, "incoterm_master");
+    }
+
+    public MigrationLogger GetLogger() => migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -49,25 +60,34 @@ public class IncotermMasterMigration : MigrationService
             pgCmd.Transaction = transaction;
         }
 
-        int insertedCount = 0;
         while (await reader.ReadAsync())
         {
+            var incoId = reader["IncoID"];
+            var recordId = $"ID={incoId}";
+            
             pgCmd.Parameters.Clear();
-            pgCmd.Parameters.AddWithValue("@incoterm_id", reader["IncoID"]);
+            pgCmd.Parameters.AddWithValue("@incoterm_id", incoId);
             pgCmd.Parameters.AddWithValue("@incoterm_code", reader["IncoCode"]);
             pgCmd.Parameters.AddWithValue("@incoterm_name", reader["IncoDescription"]);
             pgCmd.Parameters.AddWithValue("@company_id", reader["ClientSAPId"]);
-            pgCmd.Parameters.AddWithValue("@created_by", 0); // Default: 0
-            pgCmd.Parameters.AddWithValue("@created_date", DateTime.UtcNow); // Default: Now
-            pgCmd.Parameters.AddWithValue("@modified_by", DBNull.Value); // Default: null
-            pgCmd.Parameters.AddWithValue("@modified_date", DBNull.Value); // Default: null
-            pgCmd.Parameters.AddWithValue("@is_deleted", false); // Default: false
-            pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value); // Default: null
-            pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value); // Default: null
+            pgCmd.Parameters.AddWithValue("@created_by", 0);
+            pgCmd.Parameters.AddWithValue("@created_date", DateTime.UtcNow);
+            pgCmd.Parameters.AddWithValue("@modified_by", DBNull.Value);
+            pgCmd.Parameters.AddWithValue("@modified_date", DBNull.Value);
+            pgCmd.Parameters.AddWithValue("@is_deleted", false);
+            pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value);
+            pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value);
             
             int result = await pgCmd.ExecuteNonQueryAsync();
-            if (result > 0) insertedCount++;
+            if (result > 0)
+            {
+                migrationLogger.LogInserted(recordId);
+            }
         }
-        return insertedCount;
+        
+        var summary = migrationLogger.GetSummary();
+        _logger.LogInformation($"Incoterm Master Migration completed. Inserted: {summary.TotalInserted}, Skipped: {summary.TotalSkipped}");
+        
+        return summary.TotalInserted;
     }
 }

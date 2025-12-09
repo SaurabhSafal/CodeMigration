@@ -17,6 +17,7 @@ namespace DataMigration.Services
         public int SkippedRecords { get; set; }
         public string CurrentOperation { get; set; } = "";
         public TimeSpan ElapsedTime { get; set; }
+        public MigrationLogger? Logger { get; set; } // Added to capture all logs
         public double ProgressPercentage => TotalRecords > 0 ? (double)ProcessedRecords / TotalRecords * 100 : 0;
         public double RecordsPerSecond => ElapsedTime.TotalSeconds > 0 ? ProcessedRecords / ElapsedTime.TotalSeconds : 0;
         public TimeSpan EstimatedTimeRemaining

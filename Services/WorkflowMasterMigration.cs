@@ -4,14 +4,25 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
+using Microsoft.Extensions.Logging;
+using DataMigration.Services;
 
 public class WorkflowMasterMigration : MigrationService
 {
+    private readonly ILogger<WorkflowMasterMigration> _logger;
+    private readonly MigrationLogger migrationLogger;
+
     protected override string SelectQuery => "SELECT WorkFlowId, WorkFlowNo, Entry, Name, Action, CreatedBy, CreateDate, IsDefault, FromDate, DepartmentId, PurchaseGroupId, ClientSAPId, PlantId FROM TBL_WorkFlowMain";
     protected override string InsertQuery => @"INSERT INTO workflow_master (workflow_id, workflow_number, workflow_for, workflow_name, status, is_default, purchase_group_id, company_id, plant_id, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date, version_number) 
                                              VALUES (@workflow_id, @workflow_number, @workflow_for, @workflow_name, @status, @is_default, @purchase_group_id, @company_id, @plant_id, @created_by, @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date, @version_number)";
 
-    public WorkflowMasterMigration(IConfiguration configuration) : base(configuration) { }
+    public WorkflowMasterMigration(IConfiguration configuration, ILogger<WorkflowMasterMigration> logger) : base(configuration) 
+    { 
+        _logger = logger;
+        migrationLogger = new MigrationLogger(_logger, "workflow_master");
+    }
+
+    public MigrationLogger GetLogger() => migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -77,15 +88,11 @@ public class WorkflowMasterMigration : MigrationService
         {
             pgCmd.Transaction = transaction;
         }
-
-        int insertedCount = 0;
-        int processedCount = 0;
         
         try
         {
             while (await reader.ReadAsync())
             {
-                processedCount++;
                 try
                 {
                     // Validate field values before processing
@@ -102,22 +109,24 @@ public class WorkflowMasterMigration : MigrationService
                     var clientSAPId = reader.IsDBNull(reader.GetOrdinal("ClientSAPId")) ? 0 : Convert.ToInt32(reader["ClientSAPId"]);
                     var plantId = reader.IsDBNull(reader.GetOrdinal("PlantId")) ? 0 : Convert.ToInt32(reader["PlantId"]);
 
+                    var recordId = $"ID={workFlowId}";
+
                     // Validate required fields
                     if (reader.IsDBNull(reader.GetOrdinal("ClientSAPId")) || clientSAPId == 0)
                     {
-                        Console.WriteLine($"Skipping record {processedCount} (WorkFlowId: {workFlowId}) - ClientSAPId is null or zero");
+                        migrationLogger.LogSkipped("ClientSAPId is null or zero", recordId);
                         continue;
                     }
 
                     if (string.IsNullOrWhiteSpace(workFlowNo))
                     {
-                        Console.WriteLine($"Skipping record {processedCount} (WorkFlowId: {workFlowId}) - WorkFlowNo is null or empty");
+                        migrationLogger.LogSkipped("WorkFlowNo is null or empty", recordId);
                         continue;
                     }
 
                     if (string.IsNullOrWhiteSpace(name))
                     {
-                        Console.WriteLine($"Skipping record {processedCount} (WorkFlowId: {workFlowId}) - Name is null or empty");
+                        migrationLogger.LogSkipped("Name is null or empty", recordId);
                         continue;
                     }
 
@@ -137,19 +146,24 @@ public class WorkflowMasterMigration : MigrationService
                     pgCmd.Parameters.AddWithValue("@plant_id", plantIdArray);
                     pgCmd.Parameters.AddWithValue("@created_by", createdBy);
                     pgCmd.Parameters.AddWithValue("@created_date", createDate);
-                    pgCmd.Parameters.AddWithValue("@modified_by", DBNull.Value); // Default: null
-                    pgCmd.Parameters.AddWithValue("@modified_date", DBNull.Value); // Default: null
-                    pgCmd.Parameters.AddWithValue("@is_deleted", false); // Default: false
-                    pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value); // Default: null
-                    pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value); // Default: null
-                    pgCmd.Parameters.AddWithValue("@version_number", "1.0"); // Default: 1.0
+                    pgCmd.Parameters.AddWithValue("@modified_by", DBNull.Value);
+                    pgCmd.Parameters.AddWithValue("@modified_date", DBNull.Value);
+                    pgCmd.Parameters.AddWithValue("@is_deleted", false);
+                    pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value);
+                    pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value);
+                    pgCmd.Parameters.AddWithValue("@version_number", "1.0");
                     
                     int result = await pgCmd.ExecuteNonQueryAsync();
-                    if (result > 0) insertedCount++;
+                    if (result > 0)
+                    {
+                        migrationLogger.LogInserted(recordId);
+                    }
                 }
                 catch (Exception recordEx)
                 {
-                    throw new Exception($"Error processing record {processedCount} in Workflow Master Migration: {recordEx.Message}", recordEx);
+                    var workFlowId = reader.IsDBNull(reader.GetOrdinal("WorkFlowId")) ? 0 : Convert.ToInt32(reader["WorkFlowId"]);
+                    migrationLogger.LogError($"Error processing record: {recordEx.Message}", $"ID={workFlowId}", recordEx);
+                    throw new Exception($"Error processing record ID={workFlowId} in Workflow Master Migration: {recordEx.Message}", recordEx);
                 }
             }
         }
@@ -158,22 +172,25 @@ public class WorkflowMasterMigration : MigrationService
             // Check if it's a connection or stream issue
             if (readerEx.Message.Contains("reading from stream") || readerEx.Message.Contains("connection") || readerEx.Message.Contains("timeout"))
             {
-                throw new Exception($"SQL Server connection issue during Workflow Master Migration after processing {processedCount} records. " +
+                throw new Exception($"SQL Server connection issue during Workflow Master Migration after processing {migrationLogger.ProcessedCount} records. " +
                                   $"This could be due to: 1) Network connectivity issues, 2) SQL Server timeout, 3) Large dataset causing memory issues, " +
                                   $"4) Connection string issues. Original error: {readerEx.Message}", readerEx);
             }
             else if (readerEx.Message.Contains("constraint") || readerEx.Message.Contains("foreign key") || readerEx.Message.Contains("violates"))
             {
-                throw new Exception($"Database constraint violation during Workflow Master Migration at record {processedCount}. " +
+                throw new Exception($"Database constraint violation during Workflow Master Migration at record {migrationLogger.ProcessedCount}. " +
                                   $"This could be due to: 1) Duplicate primary keys, " +
                                   $"2) Invalid foreign key references, 3) Invalid data values. Original error: {readerEx.Message}", readerEx);
             }
             else
             {
-                throw new Exception($"Unexpected error during Workflow Master Migration at record {processedCount}: {readerEx.Message}", readerEx);
+                throw new Exception($"Unexpected error during Workflow Master Migration at record {migrationLogger.ProcessedCount}: {readerEx.Message}", readerEx);
             }
         }
         
-        return insertedCount;
+        var summary = migrationLogger.GetSummary();
+        _logger.LogInformation($"Workflow Master Migration completed. Inserted: {summary.TotalInserted}, Skipped: {summary.TotalSkipped}, Errors: {summary.TotalErrors}");
+        
+        return summary.TotalInserted;
     }
 }

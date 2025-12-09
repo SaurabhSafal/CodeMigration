@@ -5,15 +5,20 @@ using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
 using Microsoft.Extensions.Configuration;
+using DataMigration.Services;
 
 public class WorkflowAmountMigration : MigrationService
 {
+    private MigrationLogger? _migrationLogger;
+
     protected override string SelectQuery => "SELECT WorkFlowSubId, WorkFlowMainId, FromAmount, ToAmount, CreateDate, AssignBuyerID, CreatedBy FROM TBL_WorkFlowSub";
     
     protected override string InsertQuery => @"INSERT INTO workflow_amount (workflow_amount_id, workflow_master_id, from_amount, to_amount, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) 
                                              VALUES (@workflow_amount_id, @workflow_master_id, @from_amount, @to_amount, @created_by, @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date)";
 
     public WorkflowAmountMigration(IConfiguration configuration) : base(configuration) { }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     protected override List<string> GetLogics()
     {

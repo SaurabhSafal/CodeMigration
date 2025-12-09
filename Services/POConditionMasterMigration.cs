@@ -4,14 +4,24 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
+using Microsoft.Extensions.Logging;
+using DataMigration.Services;
 
 public class POConditionMasterMigration : MigrationService
 {
+    private readonly ILogger<POConditionMasterMigration> _logger;
+    private MigrationLogger? _migrationLogger;
+
     protected override string SelectQuery => "SELECT POConditionTypeId, POConditionTypeCode, POConditionTypeDesc, POType, StepNumber, ConditionCounter, ClientSAPId FROM TBL_POConditionTypeMaster";
     protected override string InsertQuery => @"INSERT INTO po_condition_master (po_condition_id, po_condition_code, po_condition_name, po_type, po_doc_type_id, company_id, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) 
                                              VALUES (@po_condition_id, @po_condition_code, @po_condition_name, @po_type, @po_doc_type_id, @company_id, @created_by, @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date)";
 
-    public POConditionMasterMigration(IConfiguration configuration) : base(configuration) { }
+    public POConditionMasterMigration(IConfiguration configuration, ILogger<POConditionMasterMigration> logger) : base(configuration) 
+    { 
+        _logger = logger;
+    }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -56,14 +66,22 @@ public class POConditionMasterMigration : MigrationService
 
     public async Task<int> MigrateAsync()
     {
+        _migrationLogger = new MigrationLogger(_logger, "po_condition_master");
+        _migrationLogger.LogInfo("Starting POCondition migration");
         return await base.MigrateAsync(useTransaction: true);
     }
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        // Initialize migration logger if not already done
+        if (_migrationLogger == null)
+        {
+            _migrationLogger = new MigrationLogger(_logger, "po_condition_master");
+        }
+
         // Load PODocType mapping from TBL_PO_DOC_TYPE
         var poDocTypeMapping = await LoadPoDocTypeMappingAsync(sqlConn);
-        Console.WriteLine($"Loaded {poDocTypeMapping.Count} PODocType mappings from TBL_PO_DOC_TYPE");
+        _migrationLogger.LogInfo($"Loaded {poDocTypeMapping.Count} PODocType mappings from TBL_PO_DOC_TYPE");
 
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await sqlCmd.ExecuteReaderAsync();
@@ -94,19 +112,31 @@ public class POConditionMasterMigration : MigrationService
                     // Validate required fields
                     if (reader.IsDBNull(reader.GetOrdinal("ClientSAPId")) || clientSAPId == 0)
                     {
-                        Console.WriteLine($"Skipping record {processedCount} (POConditionTypeId: {poConditionTypeId}) - ClientSAPId is null or zero");
+                        _migrationLogger.LogSkipped(
+                            "ClientSAPId is null or zero", 
+                            $"POConditionTypeId={poConditionTypeId}",
+                            new Dictionary<string, object> { { "ProcessedCount", processedCount }, { "POConditionTypeId", poConditionTypeId } }
+                        );
                         continue;
                     }
 
                     if (string.IsNullOrWhiteSpace(poConditionTypeCode))
                     {
-                        Console.WriteLine($"Skipping record {processedCount} (POConditionTypeId: {poConditionTypeId}) - POConditionTypeCode is null or empty");
+                        _migrationLogger.LogSkipped(
+                            "POConditionTypeCode is null or empty", 
+                            $"POConditionTypeId={poConditionTypeId}",
+                            new Dictionary<string, object> { { "ProcessedCount", processedCount }, { "POConditionTypeId", poConditionTypeId } }
+                        );
                         continue;
                     }
 
                     if (string.IsNullOrWhiteSpace(poConditionTypeDesc))
                     {
-                        Console.WriteLine($"Skipping record {processedCount} (POConditionTypeId: {poConditionTypeId}) - POConditionTypeDesc is null or empty");
+                        _migrationLogger.LogSkipped(
+                            "POConditionTypeDesc is null or empty", 
+                            $"POConditionTypeId={poConditionTypeId}",
+                            new Dictionary<string, object> { { "ProcessedCount", processedCount }, { "POConditionTypeId", poConditionTypeId } }
+                        );
                         continue;
                     }
 
@@ -134,10 +164,19 @@ public class POConditionMasterMigration : MigrationService
                     pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value); // Default: null
                     
                     int result = await pgCmd.ExecuteNonQueryAsync();
-                    if (result > 0) insertedCount++;
+                    if (result > 0)
+                    {
+                        insertedCount++;
+                        _migrationLogger.LogInserted($"POConditionTypeId={poConditionTypeId}");
+                    }
                 }
                 catch (Exception recordEx)
                 {
+                    _migrationLogger.LogError(
+                        $"Error processing record: {recordEx.Message}", 
+                        $"ProcessedCount={processedCount}",
+                        recordEx
+                    );
                     throw new Exception($"Error processing record {processedCount} in PO Condition Master Migration: {recordEx.Message}", recordEx);
                 }
             }
@@ -163,6 +202,7 @@ public class POConditionMasterMigration : MigrationService
             }
         }
         
+        _migrationLogger.LogInfo($"Migration completed: Processed={processedCount}, Inserted={insertedCount}, Skipped={processedCount - insertedCount}");
         return insertedCount;
     }
 

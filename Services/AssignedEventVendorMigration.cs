@@ -6,11 +6,21 @@ using Npgsql;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Linq;
+using DataMigration.Services;
+
 
 public class AssignedEventVendorMigration : MigrationService
 {
     private const int BATCH_SIZE = 1000;
     private readonly ILogger<AssignedEventVendorMigration> _logger;
+    private MigrationLogger? _migrationLogger;
+
+    public AssignedEventVendorMigration(IConfiguration configuration, ILogger<AssignedEventVendorMigration> logger) : base(configuration)
+    {
+        _logger = logger;
+    }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     protected override string SelectQuery => @"
 SELECT DISTINCT
@@ -86,11 +96,6 @@ ON CONFLICT (assigned_event_vendor_id) DO UPDATE SET
     deleted_by = EXCLUDED.deleted_by,
     deleted_date = EXCLUDED.deleted_date";
 
-    public AssignedEventVendorMigration(IConfiguration configuration, ILogger<AssignedEventVendorMigration> logger) : base(configuration)
-    {
-        _logger = logger;
-    }
-
     protected override List<string> GetLogics() => new List<string>
     {
         "Direct",      // assigned_event_vendor_id
@@ -140,37 +145,48 @@ ON CONFLICT (assigned_event_vendor_id) DO UPDATE SET
 
     public async Task<int> MigrateAsync()
     {
-        return await base.MigrateAsync(useTransaction: true);
+        _migrationLogger = new MigrationLogger(_logger, "assigned_event_vendor");
+        _migrationLogger.LogInfo("Starting AssignedEventVendor migration (USERTYPE = 'Vendor' only)");
+        int result = await base.MigrateAsync(useTransaction: true);
+        _migrationLogger.LogInfo($"Completed: {_migrationLogger.InsertedCount} inserted, {_migrationLogger.SkippedCount} skipped");
+        return result;
     }
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
         _logger.LogInformation("Starting AssignedEventVendor migration (USERTYPE = 'Vendor' only)...");
-        
+        _migrationLogger?.LogInfo("Loading valid event and supplier IDs");
+
         int insertedCount = 0;
         int skippedCount = 0;
         int batchNumber = 0;
         var batch = new List<Dictionary<string, object>>();
 
-        // Load valid event IDs and supplier IDs
         var validEventIds = await LoadValidEventIdsAsync(pgConn, transaction);
         var validSupplierIds = await LoadValidSupplierIdsAsync(pgConn, transaction);
         _logger.LogInformation($"Loaded {validEventIds.Count} valid event IDs and {validSupplierIds.Count} valid supplier IDs.");
+        _migrationLogger?.LogInfo($"Loaded {validEventIds.Count} valid event IDs and {validSupplierIds.Count} valid supplier IDs");
 
         using var selectCmd = new SqlCommand(SelectQuery, sqlConn);
         selectCmd.CommandTimeout = 300;
         using var reader = await selectCmd.ExecuteReaderAsync();
 
+        int processedCount = 0;
+
         while (await reader.ReadAsync())
         {
+            processedCount++;
             var eventSelUserId = reader["EVENTSELUSERID"] ?? DBNull.Value;
             var eventId = reader["EVENTID"] ?? DBNull.Value;
             var userId = reader["USERID"] ?? DBNull.Value;
-            
+
+            string recordId = $"EVENTSELUSERID={eventSelUserId}";
+
             // Validate required foreign keys
             if (eventId == DBNull.Value)
             {
                 _logger.LogWarning($"Skipping EVENTSELUSERID {eventSelUserId}: EVENTID is NULL.");
+                _migrationLogger?.LogSkipped("EVENTID is NULL", recordId, new Dictionary<string, object> { { "EVENTID", eventId } });
                 skippedCount++;
                 continue;
             }
@@ -179,6 +195,7 @@ ON CONFLICT (assigned_event_vendor_id) DO UPDATE SET
             if (!validEventIds.Contains(eventIdValue))
             {
                 _logger.LogWarning($"Skipping EVENTSELUSERID {eventSelUserId}: EVENTID {eventIdValue} not found in event_master.");
+                _migrationLogger?.LogSkipped($"EVENTID {eventIdValue} not found in event_master", recordId, new Dictionary<string, object> { { "EVENTID", eventIdValue } });
                 skippedCount++;
                 continue;
             }
@@ -186,6 +203,7 @@ ON CONFLICT (assigned_event_vendor_id) DO UPDATE SET
             if (userId == DBNull.Value)
             {
                 _logger.LogWarning($"Skipping EVENTSELUSERID {eventSelUserId}: USERID is NULL.");
+                _migrationLogger?.LogSkipped("USERID is NULL", recordId, new Dictionary<string, object> { { "USERID", userId } });
                 skippedCount++;
                 continue;
             }
@@ -194,6 +212,7 @@ ON CONFLICT (assigned_event_vendor_id) DO UPDATE SET
             if (!validSupplierIds.Contains(userIdValue))
             {
                 _logger.LogWarning($"Skipping EVENTSELUSERID {eventSelUserId}: USERID {userIdValue} not found in supplier_master.");
+                _migrationLogger?.LogSkipped($"USERID {userIdValue} not found in supplier_master", recordId, new Dictionary<string, object> { { "USERID", userIdValue } });
                 skippedCount++;
                 continue;
             }
@@ -204,12 +223,10 @@ ON CONFLICT (assigned_event_vendor_id) DO UPDATE SET
             var vendorCurrencyId = reader["VendorCurrencyId"] ?? DBNull.Value;
             var sendEmail = reader["SendEmail"] ?? DBNull.Value;
             var isSourceListUser = reader["IsSourceListUser"] ?? DBNull.Value;
-            
-            // Read BifurcationDone and VendorName from LEFT JOIN with TBL_PB_SUPPLIER
+
             var bifurcationDone = reader["BifurcationDone"] ?? DBNull.Value;
             var vendorName = reader["VendorName"] ?? DBNull.Value;
-            
-            // Convert BifurcationDone to boolean: true if value is 1, false otherwise
+
             bool lotAuctionBifurcationFlag = false;
             if (bifurcationDone != DBNull.Value)
             {
@@ -245,8 +262,14 @@ ON CONFLICT (assigned_event_vendor_id) DO UPDATE SET
             {
                 batchNumber++;
                 _logger.LogInformation($"Inserting batch {batchNumber} with {batch.Count} records...");
+                _migrationLogger?.LogInfo($"Inserting batch {batchNumber} with {batch.Count} records");
                 insertedCount += await InsertBatchAsync(pgConn, batch, transaction, batchNumber);
                 batch.Clear();
+            }
+
+            if (processedCount % 1000 == 0)
+            {
+                _migrationLogger?.LogInfo($"Processed {processedCount} records");
             }
         }
 
@@ -254,10 +277,12 @@ ON CONFLICT (assigned_event_vendor_id) DO UPDATE SET
         {
             batchNumber++;
             _logger.LogInformation($"Inserting final batch {batchNumber} with {batch.Count} records...");
+            _migrationLogger?.LogInfo($"Inserting final batch {batchNumber} with {batch.Count} records");
             insertedCount += await InsertBatchAsync(pgConn, batch, transaction, batchNumber);
         }
 
         _logger.LogInformation($"AssignedEventVendor migration completed. Inserted: {insertedCount}, Skipped: {skippedCount}");
+        _migrationLogger?.LogInfo($"AssignedEventVendor migration completed. Inserted: {insertedCount}, Skipped: {skippedCount}");
         return insertedCount;
     }
 
@@ -265,15 +290,15 @@ ON CONFLICT (assigned_event_vendor_id) DO UPDATE SET
     {
         var validIds = new HashSet<int>();
         var query = "SELECT event_id FROM event_master";
-        
+
         using var cmd = new NpgsqlCommand(query, pgConn, transaction);
         using var reader = await cmd.ExecuteReaderAsync();
-        
+
         while (await reader.ReadAsync())
         {
             validIds.Add(reader.GetInt32(0));
         }
-        
+
         return validIds;
     }
 
@@ -281,15 +306,15 @@ ON CONFLICT (assigned_event_vendor_id) DO UPDATE SET
     {
         var validIds = new HashSet<int>();
         var query = "SELECT supplier_id FROM supplier_master";
-        
+
         using var cmd = new NpgsqlCommand(query, pgConn, transaction);
         using var reader = await cmd.ExecuteReaderAsync();
-        
+
         while (await reader.ReadAsync())
         {
             validIds.Add(reader.GetInt32(0));
         }
-        
+
         return validIds;
     }
 
@@ -297,7 +322,6 @@ ON CONFLICT (assigned_event_vendor_id) DO UPDATE SET
     {
         if (batch.Count == 0) return 0;
 
-        // Deduplicate by assigned_event_vendor_id
         var deduplicatedBatch = batch
             .GroupBy(r => r["assigned_event_vendor_id"])
             .Select(g => g.Last())
@@ -306,6 +330,7 @@ ON CONFLICT (assigned_event_vendor_id) DO UPDATE SET
         if (deduplicatedBatch.Count < batch.Count)
         {
             _logger.LogWarning($"Batch {batchNumber}: Removed {batch.Count - deduplicatedBatch.Count} duplicate assigned_event_vendor_id records.");
+            _migrationLogger?.LogInfo($"Batch {batchNumber}: Removed {batch.Count - deduplicatedBatch.Count} duplicate assigned_event_vendor_id records");
         }
 
         var columns = new List<string> {
@@ -344,8 +369,24 @@ ON CONFLICT (assigned_event_vendor_id) DO UPDATE SET {updateSet}";
         insertCmd.CommandTimeout = 300;
         insertCmd.Parameters.AddRange(parameters.ToArray());
 
-        int result = await insertCmd.ExecuteNonQueryAsync();
-        _logger.LogInformation($"Batch {batchNumber}: Inserted/Updated {result} records.");
+        int result = 0;
+        try
+        {
+            result = await insertCmd.ExecuteNonQueryAsync();
+            _logger.LogInformation($"Batch {batchNumber}: Inserted/Updated {result} records.");
+            _migrationLogger?.LogInfo($"Batch {batchNumber}: Inserted/Updated {result} records");
+
+            foreach (var record in deduplicatedBatch)
+            {
+                var recordId = $"EVENTSELUSERID={record["assigned_event_vendor_id"]}";
+                _migrationLogger?.LogInserted(recordId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"Batch {batchNumber}: Error during insert");
+            _migrationLogger?.LogError($"Batch {batchNumber}: Error during insert", $"Batch={batchNumber}", ex);
+        }
         return result;
     }
 }

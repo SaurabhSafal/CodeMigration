@@ -4,9 +4,14 @@ using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using DataMigration.Services;
 
 public class TaxCodeMasterMigration : MigrationService
 {
+    private readonly ILogger<TaxCodeMasterMigration> _logger;
+    private readonly MigrationLogger migrationLogger;
+
     // SQL Server: TBL_TAXCODEMASTER -> PostgreSQL: tax_code_master
     protected override string SelectQuery => @"
         SELECT 
@@ -43,7 +48,13 @@ public class TaxCodeMasterMigration : MigrationService
             @deleted_date
         )";
 
-    public TaxCodeMasterMigration(IConfiguration configuration) : base(configuration) { }
+    public TaxCodeMasterMigration(IConfiguration configuration, ILogger<TaxCodeMasterMigration> logger) : base(configuration) 
+    { 
+        _logger = logger;
+        migrationLogger = new MigrationLogger(_logger, "tax_code_master");
+    }
+
+    public MigrationLogger GetLogger() => migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -63,13 +74,12 @@ public class TaxCodeMasterMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
-        Console.WriteLine("🚀 Starting TaxCodeMaster migration...");
-        Console.WriteLine($"📋 Executing query...");
+        migrationLogger.LogInfo("Starting TaxCodeMaster migration...");
         
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await sqlCmd.ExecuteReaderAsync();
 
-        Console.WriteLine($"✓ Query executed. Processing records...");
+        migrationLogger.LogInfo("Query executed. Processing records...");
         
         using var pgCmd = new NpgsqlCommand(InsertQuery, pgConn);
         if (transaction != null)
@@ -77,8 +87,6 @@ public class TaxCodeMasterMigration : MigrationService
             pgCmd.Transaction = transaction;
         }
 
-        int insertedCount = 0;
-        int skippedCount = 0;
         int totalReadCount = 0;
 
         while (await reader.ReadAsync())
@@ -86,19 +94,22 @@ public class TaxCodeMasterMigration : MigrationService
             totalReadCount++;
             if (totalReadCount == 1)
             {
-                Console.WriteLine($"✓ Found records! Processing...");
+                migrationLogger.LogInfo("Found records! Processing...");
             }
             
-            if (totalReadCount % 10 == 0)
+            if (totalReadCount % 100 == 0)
             {
-                Console.WriteLine($"📊 Processed {totalReadCount} records so far... (Inserted: {insertedCount}, Skipped: {skippedCount})");
+                migrationLogger.LogInfo($"Processed {totalReadCount} records so far... (Inserted: {migrationLogger.InsertedCount}, Errors: {migrationLogger.ErrorCount})");
             }
+            
+            var taxCodeId = reader["TaxCode_Master_Id"];
+            var recordId = $"ID={taxCodeId}";
             
             try
             {
                 pgCmd.Parameters.Clear();
 
-                pgCmd.Parameters.AddWithValue("@tax_code_id", reader["TaxCode_Master_Id"] ?? DBNull.Value);
+                pgCmd.Parameters.AddWithValue("@tax_code_id", taxCodeId ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@tax_code", reader["TaxCode"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@tax_code_name", reader["TaxCodeDesc"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@company_id", reader["ClientSAPId"] ?? DBNull.Value);
@@ -111,30 +122,25 @@ public class TaxCodeMasterMigration : MigrationService
                 pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value);
 
                 int result = await pgCmd.ExecuteNonQueryAsync();
-                if (result > 0) insertedCount++;
+                if (result > 0)
+                {
+                    migrationLogger.LogInserted(recordId);
+                }
             }
             catch (Exception ex)
             {
-                skippedCount++;
-                Console.WriteLine($"❌ Error migrating TaxCode_Master_Id {reader["TaxCode_Master_Id"]}: {ex.Message}");
-                Console.WriteLine($"   Stack Trace: {ex.StackTrace}");
-                if (ex.InnerException != null)
-                {
-                    Console.WriteLine($"   Inner Exception: {ex.InnerException.Message}");
-                }
+                migrationLogger.LogError($"Error migrating TaxCode_Master_Id {taxCodeId}: {ex.Message}", recordId, ex);
             }
         }
 
-        Console.WriteLine($"\n📊 Migration Summary:");
-        Console.WriteLine($"   Total records read: {totalReadCount}");
-        Console.WriteLine($"   ✓ Successfully inserted: {insertedCount}");
-        Console.WriteLine($"   ❌ Skipped (errors): {skippedCount}");
-        
         if (totalReadCount == 0)
         {
-            Console.WriteLine($"\n⚠️  WARNING: No records found in TBL_TAXCODEMASTER table!");
+            migrationLogger.LogInfo("WARNING: No records found in TBL_TAXCODEMASTER table!");
         }
 
-        return insertedCount;
+        var summary = migrationLogger.GetSummary();
+        _logger.LogInformation($"Tax Code Master Migration Summary: Total: {totalReadCount}, Inserted: {summary.TotalInserted}, Errors: {summary.TotalErrors}");
+
+        return summary.TotalInserted;
     }
 }

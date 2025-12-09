@@ -9,10 +9,17 @@ using DataMigration.Services;
 
 public class ErpPrLinesMigration : MigrationService
 {
-    private const int BATCH_SIZE = 100; // Reduced to avoid 65535 parameter limit (67 columns x 100 rows = 6700 parameters)
+    private const int BATCH_SIZE = 100;
     private readonly ILogger<ErpPrLinesMigration> _logger;
+    private MigrationLogger? _migrationLogger;
 
-    // 1. The SQL query covers all fields and lookups as per your mapping.
+    public ErpPrLinesMigration(IConfiguration configuration, ILogger<ErpPrLinesMigration> logger) : base(configuration)
+    {
+        _logger = logger;
+    }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
+
     protected override string SelectQuery => @"
 SELECT
     t.PRTRANSID,
@@ -66,7 +73,7 @@ SELECT
     t.AcctAssignmentCat AS acct_assignment_cat,
     t.AcctAssignmentCatDesc AS acct_assignment_cat_desc,
     t.PROJECT_ID AS wbs_element_code,
-    NULL AS wbs_element_name, -- Placeholder. Add join/lookup if needed.
+    NULL AS wbs_element_name,
     t.CurrencyCode AS currency_code,
     t.TrackingNumber AS tracking_number,
     pm.CreatedBy AS erp_created_by,
@@ -89,7 +96,6 @@ LEFT JOIN TBL_USERMASTERFINAL u ON u.PERSON_ID = t.BUYERID
 WHERE ISNULL(pm.PR_NUM, '') <> ''
 ";
 
-    // 2. The Postgres insert covers all fields as per your mapping
     protected override string InsertQuery => @"
 INSERT INTO erp_pr_lines (
     erp_pr_lines_id, temp_pr, user_id, user_full_name, pr_status, pr_number, pr_line, header_text, company_id, company_code,
@@ -111,11 +117,6 @@ INSERT INTO erp_pr_lines (
     @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date
 )";
 
-    public ErpPrLinesMigration(IConfiguration configuration, ILogger<ErpPrLinesMigration> logger) : base(configuration) 
-    {
-        _logger = logger;
-    }
-
     private async Task<HashSet<int>> LoadValidUomIdsAsync(NpgsqlConnection pgConn, NpgsqlTransaction? transaction)
     {
         var validIds = new HashSet<int>();
@@ -131,73 +132,13 @@ INSERT INTO erp_pr_lines (
 
     protected override List<string> GetLogics() => new List<string>
     {
-        "Direct", // erp_pr_lines_id
-        "Direct", // temp_pr
-        "Direct", // user_id
-        "Direct", // user_full_name
-        "Direct", // pr_status
-        "Direct", // pr_number
-        "Direct", // pr_line
-        "Direct", // header_text
-        "Direct", // company_id
-        "Direct", // company_code
-        "Direct", // uom_id
-        "Direct", // uom_code
-        "Direct", // plant_id
-        "Direct", // plant_code
-        "Direct", // material_group_id
-        "Direct", // material_group_code
-        "Direct", // purchase_group_id
-        "Direct", // purchase_group_code
-        "Direct", // material_code
-        "Direct", // material_short_text
-        "Direct", // material_item_text
-        "Direct", // item_type
-        "Direct", // material_po_description
-        "Direct", // amount
-        "Direct", // unit_price
-        "Direct", // rem_qty
-        "Direct", // qty
-        "Direct", // po_number
-        "Direct", // po_creation_date
-        "Direct", // po_qty
-        "Direct", // po_vendor_code
-        "Direct", // po_vendor_name
-        "Direct", // po_item_value
-        "Direct", // lpo_number
-        "Direct", // lpo_line_number
-        "Direct", // lpo_doc_type
-        "Direct", // lpo_creation_date
-        "Direct", // lpo_uom
-        "Direct", // lpo_unit_price
-        "Direct", // lpo_line_currency
-        "Direct", // lpo_vendor_code
-        "Direct", // lpo_vendor_name
-        "Direct", // lpo_date
-        "Direct", // lpo_qty
-        "Direct", // total_stock
-        "Direct", // cost_center
-        "Direct", // store_location
-        "Direct", // department
-        "Direct", // acct_assignment_cat
-        "Direct", // acct_assignment_cat_desc
-        "Direct", // wbs_element_code
-        "Direct", // wbs_element_name
-        "Direct", // currency_code
-        "Direct", // tracking_number
-        "Direct", // erp_created_by
-        "Direct", // erp_request_by
-        "Direct", // erp_change_on_date
-        "Direct", // delivery_date
-        "Direct", // is_closed
-        "Conditional", // item_block
-        "Direct", // created_by
-        "Direct", // created_date
-        "Direct", // modified_by
-        "Direct", // modified_date
-        "Direct", // is_deleted
-        "Direct", // deleted_by
-        "Direct"  // deleted_date
+        "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct",
+        "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct",
+        "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct",
+        "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct",
+        "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct", "Direct",
+        "Direct", "Direct", "Direct", "Direct", "Direct", "Conditional", "Direct", "Direct", "Direct", "Direct",
+        "Direct", "Direct", "Direct", "Direct", "Direct", "Direct"
     };
 
     public override List<object> GetMappings()
@@ -276,48 +217,59 @@ INSERT INTO erp_pr_lines (
 
     public async Task<int> MigrateAsync()
     {
-        return await base.MigrateAsync(useTransaction: true);
+        _migrationLogger = new MigrationLogger(_logger, "erp_pr_lines");
+        _migrationLogger.LogInfo("Starting migration");
+
+        var result = await base.MigrateAsync(useTransaction: true);
+
+        _migrationLogger.LogInfo($"Completed: {_migrationLogger.InsertedCount} inserted, {_migrationLogger.SkippedCount} skipped");
+        return result;
     }
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
-        // Load valid UOM IDs
         var validUomIds = await LoadValidUomIdsAsync(pgConn, transaction);
-        _logger.LogInformation($"Loaded {validUomIds.Count} valid UOM IDs from uom_master.");
-        
+        _migrationLogger?.LogInfo($"Loaded {validUomIds.Count} valid UOM IDs from uom_master.");
+
         int insertedCount = 0;
         int skippedCount = 0;
         int batchNumber = 0;
         var batch = new List<Dictionary<string, object>>();
-        
+
         using var selectCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await selectCmd.ExecuteReaderAsync();
-        
+
         while (await reader.ReadAsync())
         {
-            // Validate UOM ID
             var uomIdValue = reader["uom_id"];
+            var prTransId = reader["PRTRANSID"]?.ToString() ?? "";
             if (uomIdValue != DBNull.Value)
             {
                 int uomId = Convert.ToInt32(uomIdValue);
-                
-                // Skip if UOM ID is 0
+
                 if (uomId == 0)
                 {
-                    _logger.LogWarning($"Skipping PRTRANSID {reader["PRTRANSID"]}: UOM ID is 0.");
                     skippedCount++;
+                    _migrationLogger?.LogSkipped(
+                        "UOM ID is 0",
+                        $"PRTRANSID={prTransId}",
+                        new Dictionary<string, object> { { "uom_id", uomId } }
+                    );
                     continue;
                 }
-                
-                // Skip if UOM ID not present in uom_master
+
                 if (!validUomIds.Contains(uomId))
                 {
-                    _logger.LogWarning($"Skipping PRTRANSID {reader["PRTRANSID"]}: UOM ID {uomId} not found in uom_master.");
                     skippedCount++;
+                    _migrationLogger?.LogSkipped(
+                        $"UOM ID {uomId} not found in uom_master",
+                        $"PRTRANSID={prTransId}",
+                        new Dictionary<string, object> { { "uom_id", uomId } }
+                    );
                     continue;
                 }
             }
-            
+
             var record = new Dictionary<string, object>
             {
                 ["erp_pr_lines_id"] = reader["PRTRANSID"] ?? DBNull.Value,
@@ -388,35 +340,35 @@ INSERT INTO erp_pr_lines (
                 ["deleted_by"] = reader["deleted_by"] ?? DBNull.Value,
                 ["deleted_date"] = reader["deleted_date"] ?? DBNull.Value
             };
-            
+
             batch.Add(record);
-            
+
             if (batch.Count >= BATCH_SIZE)
             {
                 batchNumber++;
-                _logger.LogInformation($"Starting batch {batchNumber} with {batch.Count} records...");
+                _migrationLogger?.LogInfo($"Starting batch {batchNumber} with {batch.Count} records...");
                 insertedCount += await InsertBatchAsync(pgConn, batch, transaction, batchNumber);
-                _logger.LogInformation($"Completed batch {batchNumber}. Total records inserted so far: {insertedCount}");
+                _migrationLogger?.LogInfo($"Completed batch {batchNumber}. Total records inserted so far: {insertedCount}");
                 batch.Clear();
             }
         }
-        
+
         if (batch.Count > 0)
         {
             batchNumber++;
-            _logger.LogInformation($"Starting batch {batchNumber} with {batch.Count} records...");
+            _migrationLogger?.LogInfo($"Starting batch {batchNumber} with {batch.Count} records...");
             insertedCount += await InsertBatchAsync(pgConn, batch, transaction, batchNumber);
-            _logger.LogInformation($"Completed batch {batchNumber}. Total records inserted so far: {insertedCount}");
+            _migrationLogger?.LogInfo($"Completed batch {batchNumber}. Total records inserted so far: {insertedCount}");
         }
-        
-        _logger.LogInformation($"Migration finished. Total records inserted: {insertedCount}, Skipped: {skippedCount}");
+
+        _migrationLogger?.LogInfo($"Migration finished. Total records inserted: {insertedCount}, Skipped: {skippedCount}");
         return insertedCount;
     }
 
     private async Task<int> InsertBatchAsync(NpgsqlConnection pgConn, List<Dictionary<string, object>> batch, NpgsqlTransaction? transaction, int batchNumber)
     {
         if (batch.Count == 0) return 0;
-        
+
         var columns = new List<string> {
             "erp_pr_lines_id", "temp_pr", "user_id", "user_full_name", "pr_status", "pr_number", "pr_line", "header_text", 
             "company_id", "company_code", "uom_id", "uom_code", "plant_id", "plant_code", "material_group_id", "material_group_code", 
@@ -429,11 +381,11 @@ INSERT INTO erp_pr_lines (
             "erp_change_on_date", "delivery_date", "is_closed", "item_block", "created_by", "created_date", "modified_by", "modified_date", 
             "is_deleted", "deleted_by", "deleted_date"
         };
-        
+
         var valueRows = new List<string>();
         var parameters = new List<NpgsqlParameter>();
         int paramIndex = 0;
-        
+
         foreach (var record in batch)
         {
             var valuePlaceholders = new List<string>();
@@ -446,13 +398,19 @@ INSERT INTO erp_pr_lines (
             }
             valueRows.Add($"({string.Join(", ", valuePlaceholders)})");
         }
-        
+
         var sql = $"INSERT INTO erp_pr_lines ({string.Join(", ", columns)}) VALUES {string.Join(", ", valueRows)}";
         using var insertCmd = new NpgsqlCommand(sql, pgConn, transaction);
         insertCmd.Parameters.AddRange(parameters.ToArray());
-        
+
         int result = await insertCmd.ExecuteNonQueryAsync();
-        _logger.LogInformation($"Batch {batchNumber}: Inserted {result} records into erp_pr_lines.");
+        _migrationLogger?.LogInfo($"Batch {batchNumber}: Inserted {result} records into erp_pr_lines.");
+        foreach (var record in batch)
+        {
+            var id = record.ContainsKey("erp_pr_lines_id") ? record["erp_pr_lines_id"]?.ToString() : null;
+            if (!string.IsNullOrEmpty(id))
+                _migrationLogger?.LogInserted($"PRTRANSID={id}");
+        }
         return result;
     }
 }

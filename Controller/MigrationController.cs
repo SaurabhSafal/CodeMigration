@@ -1069,6 +1069,36 @@ public class MigrationController : Controller
             else if (request.Table.ToLower() == "pocondition")
             {
                 recordCount = await _poConditionMigration.MigrateAsync();
+                
+                // Get logger and include detailed logs
+                var logger = _poConditionMigration.GetLogger();
+                if (logger != null)
+                {
+                    var summary = logger.GetSummary();
+                    var groupedLogs = logger.GetGroupedLogs(includeDebug: false); // Use grouped logs
+                    
+                    return Json(new { 
+                        success = true, 
+                        message = $"Migration completed for {request.Table}. Inserted: {summary.TotalInserted}, Skipped: {summary.TotalSkipped}",
+                        details = new
+                        {
+                            inserted = summary.TotalInserted,
+                            skipped = summary.TotalSkipped,
+                            processed = summary.TotalProcessed,
+                            errors = summary.TotalErrors
+                        },
+                        logs = groupedLogs.Select(log => new
+                        {
+                            level = log.Level.ToString(),
+                            message = log.Message,
+                            recordIds = log.RecordIdentifiers,
+                            recordCount = log.RecordCount,
+                            category = log.Category,
+                            firstTimestamp = log.FirstTimestamp,
+                            lastTimestamp = log.LastTimestamp
+                        }).ToList()
+                    });
+                }
             }
             else if (request.Table.ToLower() == "arcsub")
             {
@@ -1077,6 +1107,36 @@ public class MigrationController : Controller
             else if (request.Table.ToLower() == "arcplant")
             {
                 recordCount = await _arcPlantMigration.MigrateAsync();
+                
+                // Get logger and include detailed logs
+                var logger = _arcPlantMigration.GetLogger();
+                if (logger != null)
+                {
+                    var summary = logger.GetSummary();
+                    var groupedLogs = logger.GetGroupedLogs(includeDebug: false);
+                    
+                    return Json(new { 
+                        success = true, 
+                        message = $"Migration completed for {request.Table}. Inserted: {summary.TotalInserted}, Skipped: {summary.TotalSkipped}",
+                        details = new
+                        {
+                            inserted = summary.TotalInserted,
+                            skipped = summary.TotalSkipped,
+                            processed = summary.TotalProcessed,
+                            errors = summary.TotalErrors
+                        },
+                        logs = groupedLogs.Select(log => new
+                        {
+                            level = log.Level.ToString(),
+                            message = log.Message,
+                            recordIds = log.RecordIdentifiers,
+                            recordCount = log.RecordCount,
+                            category = log.Category,
+                            firstTimestamp = log.FirstTimestamp,
+                            lastTimestamp = log.LastTimestamp
+                        }).ToList()
+                    });
+                }
             }
             else if (request.Table.ToLower() == "arcattachment")
             {
@@ -1157,6 +1217,36 @@ public class MigrationController : Controller
             else if (request.Table.ToLower() == "supplierterms")
             {
                 recordCount = await _supplierTermsMigration.MigrateAsync();
+                
+                // Get logger and include detailed logs
+                var logger = _supplierTermsMigration.GetLogger();
+                if (logger != null)
+                {
+                    var summary = logger.GetSummary();
+                    var groupedLogs = logger.GetGroupedLogs(includeDebug: false); // Use grouped logs
+                    
+                    return Json(new { 
+                        success = true, 
+                        message = $"Migration completed for {request.Table}. Inserted: {summary.TotalInserted}, Skipped: {summary.TotalSkipped}",
+                        details = new
+                        {
+                            inserted = summary.TotalInserted,
+                            skipped = summary.TotalSkipped,
+                            processed = summary.TotalProcessed,
+                            errors = summary.TotalErrors
+                        },
+                        logs = groupedLogs.Select(log => new
+                        {
+                            level = log.Level.ToString(),
+                            message = log.Message,
+                            recordIds = log.RecordIdentifiers,
+                            recordCount = log.RecordCount,
+                            category = log.Category,
+                            firstTimestamp = log.FirstTimestamp,
+                            lastTimestamp = log.LastTimestamp
+                        }).ToList()
+                    });
+                }
             }
             else if (request.Table.ToLower() == "suppliertermdeviations")
             {

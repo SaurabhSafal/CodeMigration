@@ -6,6 +6,7 @@ using Npgsql;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Linq;
+using DataMigration.Services;
 
 public class EventCollaborationMigration : MigrationService
 {
