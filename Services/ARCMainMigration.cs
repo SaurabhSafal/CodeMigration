@@ -7,6 +7,10 @@ using Microsoft.Extensions.Configuration;
 
 public class ARCMainMigration : MigrationService
 {
+    private HashSet<int> _validCurrencyIds = new HashSet<int>();
+    private HashSet<int> _validUserIds = new HashSet<int>();
+    private int _defaultCurrencyId = 1; // Will be loaded from DB
+
     // SQL Server: TBL_ARCMain -> PostgreSQL: arc_header
     // Using aliases that match PostgreSQL column names
     protected override string SelectQuery => @"
@@ -96,7 +100,10 @@ public class ARCMainMigration : MigrationService
             @deleted_date
         )";
 
-    public ARCMainMigration(IConfiguration configuration) : base(configuration) { }
+    public ARCMainMigration(IConfiguration configuration, ILogger<ARCMainMigration> logger) : base(configuration)
+    {
+        // ...existing code...
+    }
 
     protected override List<string> GetLogics()
     {
@@ -130,21 +137,72 @@ public class ARCMainMigration : MigrationService
         return await base.MigrateAsync(useTransaction: true);
     }
 
+    // Load valid currency IDs at the start of migration
+    private async Task LoadValidCurrencyIdsAsync(NpgsqlConnection pgConn)
+    {
+        _validCurrencyIds.Clear();
+        using var cmd = new NpgsqlCommand("SELECT currency_id FROM currency_master WHERE currency_id IS NOT NULL ORDER BY currency_id", pgConn);
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            _validCurrencyIds.Add(reader.GetInt32(0));
+        }
+        
+        // Set default to first available currency, or try to find INR/USD
+        if (_validCurrencyIds.Count > 0)
+        {
+            // Prefer common currencies: 1 (often USD), 86 (INR if exists)
+            if (_validCurrencyIds.Contains(1)) _defaultCurrencyId = 1;
+            else if (_validCurrencyIds.Contains(86)) _defaultCurrencyId = 86;
+            else _defaultCurrencyId = _validCurrencyIds.First();
+        }
+        
+        Console.WriteLine($"Loaded {_validCurrencyIds.Count} valid currency IDs. Default currency_id: {_defaultCurrencyId}");
+    }
+    
+    // Load valid user IDs at the start of migration
+    private async Task LoadValidUserIdsAsync(NpgsqlConnection pgConn)
+    {
+        _validUserIds.Clear();
+        using var cmd = new NpgsqlCommand("SELECT user_id FROM users WHERE user_id IS NOT NULL ORDER BY user_id", pgConn);
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            _validUserIds.Add(reader.GetInt32(0));
+        }
+        Console.WriteLine($"Loaded {_validUserIds.Count} valid user IDs from users table");
+    }
+    
+    // Helper to validate user ID
+    private object ValidateUserId(int? userId)
+    {
+        if (userId.HasValue && _validUserIds.Contains(userId.Value))
+            return userId.Value;
+        return DBNull.Value;
+    }
+    
+    // Helper to validate and fix currency ID
+    private int ValidateCurrencyId(int? currencyId)
+    {
+        if (currencyId.HasValue && _validCurrencyIds.Contains(currencyId.Value))
+            return currencyId.Value;
+        return _defaultCurrencyId;
+    }
+
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
         Console.WriteLine("🚀 Starting ARCMain migration...");
+        
+        // Load valid currency IDs and user IDs first
+        await LoadValidCurrencyIdsAsync(pgConn);
+        await LoadValidUserIdsAsync(pgConn);
+        
         Console.WriteLine($"📋 Executing query: {SelectQuery.Substring(0, Math.Min(100, SelectQuery.Length))}...");
         
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await sqlCmd.ExecuteReaderAsync();
 
         Console.WriteLine($"✓ Query executed. Checking for records...");
-        
-        using var pgCmd = new NpgsqlCommand(InsertQuery, pgConn);
-        if (transaction != null)
-        {
-            pgCmd.Transaction = transaction;
-        }
 
         int insertedCount = 0;
         int skippedCount = 0;
@@ -163,9 +221,20 @@ public class ARCMainMigration : MigrationService
                 Console.WriteLine($"📊 Processed {totalReadCount} records so far... (Inserted: {insertedCount}, Skipped: {skippedCount})");
             }
             
+            // Use savepoint for each record to allow rollback without aborting entire transaction
+            string savepointName = $"sp_{totalReadCount}";
+            
             try
             {
-                pgCmd.Parameters.Clear();
+                // Create savepoint if we have a parent transaction
+                if (transaction != null)
+                {
+                    await using var savepointCmd = new NpgsqlCommand($"SAVEPOINT {savepointName}", pgConn, transaction);
+                    await savepointCmd.ExecuteNonQueryAsync();
+                }
+                
+                using var pgCmd = new NpgsqlCommand(InsertQuery, pgConn);
+                pgCmd.Transaction = transaction;
 
                 var arcMainId = reader["ARCMainId"];
                 Console.WriteLine($"Processing ARCMainId: {arcMainId}");
@@ -189,18 +258,31 @@ public class ARCMainMigration : MigrationService
                 pgCmd.Parameters.AddWithValue("@event_id", reader["EventId"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@used_total_value", reader["UsedTotalValue"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@arc_terms", reader["ARCTerms"] ?? DBNull.Value);
+                
+                // Validate currency_id - use ValidateCurrencyId to ensure it exists in currency_master
                 var currencyId = reader["CurrencyId"];
-                if (currencyId == DBNull.Value || currencyId == null)
-                {
-                    pgCmd.Parameters.AddWithValue("@currency_id", 86);
-                }
-                else
-                {
-                    pgCmd.Parameters.AddWithValue("@currency_id", currencyId);
-                }
-                pgCmd.Parameters.AddWithValue("@created_by", reader["CreatedBy"] ?? DBNull.Value);
+                int validatedCurrencyId = ValidateCurrencyId(
+                    currencyId != DBNull.Value && currencyId != null 
+                        ? Convert.ToInt32(currencyId) 
+                        : (int?)null
+                );
+                pgCmd.Parameters.AddWithValue("@currency_id", validatedCurrencyId);
+                
+                // Validate created_by and modified_by
+                var createdBy = reader["CreatedBy"];
+                var updatedBy = reader["UpdatedBy"];
+                
+                pgCmd.Parameters.AddWithValue("@created_by", ValidateUserId(
+                    createdBy != DBNull.Value && createdBy != null 
+                        ? Convert.ToInt32(createdBy) 
+                        : (int?)null
+                ));
                 pgCmd.Parameters.AddWithValue("@created_date", reader["CreatedDate"] ?? DBNull.Value);
-                pgCmd.Parameters.AddWithValue("@modified_by", reader["UpdatedBy"] ?? DBNull.Value);
+                pgCmd.Parameters.AddWithValue("@modified_by", ValidateUserId(
+                    updatedBy != DBNull.Value && updatedBy != null 
+                        ? Convert.ToInt32(updatedBy) 
+                        : (int?)null
+                ));
                 pgCmd.Parameters.AddWithValue("@modified_date", reader["UpdatedDate"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@is_deleted", false);
                 pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value);
@@ -276,7 +358,7 @@ public class ARCMainMigration : MigrationService
                         // arc_header_history does not have arc_header_history_id in insert (auto-increment)
                         if (param.ParameterName != "@arc_header_history_id")
                         {
-                            historyCmd.Parameters.AddWithValue(param.ParameterName, param.Value);
+                            historyCmd.Parameters.AddWithValue(param.ParameterName, param.Value ?? DBNull.Value);
                         }
                     }
                     int historyResult = await historyCmd.ExecuteNonQueryAsync();
@@ -287,6 +369,13 @@ public class ARCMainMigration : MigrationService
                 {
                     insertedCount++;
                     Console.WriteLine($"✓ Successfully inserted ARCMainId: {arcMainId}");
+                    
+                    // Release savepoint if successful
+                    if (transaction != null)
+                    {
+                        await using var releaseCmd = new NpgsqlCommand($"RELEASE SAVEPOINT {savepointName}", pgConn, transaction);
+                        await releaseCmd.ExecuteNonQueryAsync();
+                    }
                 }
                 else
                 {
@@ -297,11 +386,22 @@ public class ARCMainMigration : MigrationService
             {
                 skippedCount++;
                 Console.WriteLine($"❌ Error migrating ARCMainId {reader["ARCMainId"]}: {ex.Message}");
-                Console.WriteLine($"   Stack Trace: {ex.StackTrace}");
-                if (ex.InnerException != null)
+                
+                // Rollback to savepoint if we have a transaction
+                if (transaction != null)
                 {
-                    Console.WriteLine($"   Inner Exception: {ex.InnerException.Message}");
+                    try
+                    {
+                        await using var rollbackCmd = new NpgsqlCommand($"ROLLBACK TO SAVEPOINT {savepointName}", pgConn, transaction);
+                        await rollbackCmd.ExecuteNonQueryAsync();
+                        Console.WriteLine($"   Rolled back to savepoint for ARCMainId {reader["ARCMainId"]}");
+                    }
+                    catch (Exception rollbackEx)
+                    {
+                        Console.WriteLine($"   Error rolling back savepoint: {rollbackEx.Message}");
+                    }
                 }
+                
                 // Continue with next record
             }
         }

@@ -39,10 +39,10 @@ public class ARCPlantMigration : MigrationService
             new { source = "BlockDate", target = "block_date" },
             new { source = "BlockRemark", target = "block_remark" },
             new { source = "Status", target = "status" },
-            new { source = "CreatedBy", target = "created_by" },
-            new { source = "CreateDate", target = "created_date" },
-            new { source = "CreatedBy", target = "modified_by" },
-            new { source = "CreateDate", target = "modified_date" },
+            new { source = "-", target = "created_by", note = "Not in source table" },
+            new { source = "-", target = "created_date", note = "Not in source table" },
+            new { source = "-", target = "modified_by", note = "Not in source table" },
+            new { source = "-", target = "modified_date", note = "Not in source table" },
             new { source = "-", target = "is_deleted" },
             new { source = "-", target = "deleted_by" },
             new { source = "-", target = "deleted_date" }
@@ -57,6 +57,7 @@ public class ARCPlantMigration : MigrationService
         var validPaymentTermIds = await LoadValidIdsAsync(pgConn, "payment_term_master", "payment_term_id");
         var validIncotermIds = await LoadValidIdsAsync(pgConn, "incoterm_master", "incoterm_id");
         var validSupplierIds = await LoadValidIdsAsync(pgConn, "supplier_master", "supplier_id");
+        // Note: No need to load validUserIds as TBL_ARCPlant doesn't have CreatedBy column
 
         int insertedCount = 0;
         int skippedCount = 0;
@@ -106,6 +107,8 @@ public class ARCPlantMigration : MigrationService
                 continue;
             }
 
+            // TBL_ARCPlant doesn't have CreatedBy/CreateDate columns in MSSQL
+            // Set created_by and modified_by to NULL for PostgreSQL
             var record = new Dictionary<string, object>
             {
                 ["arc_header_id"] = arcHeaderId.HasValue ? (object)arcHeaderId.Value : DBNull.Value,
@@ -116,10 +119,10 @@ public class ARCPlantMigration : MigrationService
                 ["block_date"] = reader["BlockDate"] ?? (object)DBNull.Value,
                 ["block_remark"] = reader["BlockRemark"] ?? (object)DBNull.Value,
                 ["status"] = reader["Status"] ?? (object)DBNull.Value,
-                ["created_by"] = reader["CreatedBy"] ?? (object)DBNull.Value,
-                ["created_date"] = reader["CreateDate"] ?? (object)DBNull.Value,
-                ["modified_by"] = reader["CreatedBy"] ?? (object)DBNull.Value,
-                ["modified_date"] = reader["CreateDate"] ?? (object)DBNull.Value,
+                ["created_by"] = DBNull.Value,
+                ["created_date"] = DBNull.Value,
+                ["modified_by"] = DBNull.Value,
+                ["modified_date"] = DBNull.Value,
                 ["is_deleted"] = false,
                 ["deleted_by"] = DBNull.Value,
                 ["deleted_date"] = DBNull.Value

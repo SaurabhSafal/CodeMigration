@@ -338,25 +338,38 @@ public class EventMasterMigration : MigrationService
         int failedCount = 0;
         var errors = new List<string>();
         int totalRecords = 0;
+        
+        SqlConnection? sqlConnection = null;
+        NpgsqlConnection? pgConnection = null;
 
         try
         {
             _logger.LogInformation("Starting optimized EventMaster migration...");
 
-            using var sqlConnection = GetSqlServerConnection();
-            using var pgConnection = GetPostgreSqlConnection();
+            sqlConnection = GetSqlServerConnection();
+            pgConnection = GetPostgreSqlConnection();
 
             await sqlConnection.OpenAsync();
+            _logger.LogInformation("SQL Server connection opened successfully");
+            
+            // Small delay to ensure connection is fully established
+            await Task.Delay(100);
+            
             await pgConnection.OpenAsync();
-
-            _logger.LogInformation("Database connections established successfully");
+            _logger.LogInformation("PostgreSQL connection opened successfully");
 
             // Get total count for progress tracking
             using (var countCmd = new SqlCommand("SELECT COUNT(*) FROM TBL_EVENTMASTER", sqlConnection))
             {
-                var scalarResult = await countCmd.ExecuteScalarAsync(); // sql
+                var scalarResult = await countCmd.ExecuteScalarAsync();
                 totalRecords = scalarResult != null && scalarResult != DBNull.Value ? Convert.ToInt32(scalarResult) : 0;
                 _logger.LogInformation($"Total records to migrate: {totalRecords}");
+                
+                if (totalRecords == 0)
+                {
+                    _logger.LogWarning("No records found in TBL_EVENTMASTER. Migration will be skipped.");
+                    return (0, 0, new List<string> { "No records found in source table" });
+                }
             }
 
             // Pre-load price_bid_template mappings to avoid repeated lookups
@@ -382,6 +395,43 @@ public class EventMasterMigration : MigrationService
             var error = $"Migration failed with exception: {ex.Message}\nStack Trace: {ex.StackTrace}";
             _logger.LogError(error);
             errors.Add(error);
+        }
+        finally
+        {
+            // Ensure connections are properly disposed
+            if (pgConnection != null)
+            {
+                try
+                {
+                    if (pgConnection.State == ConnectionState.Open)
+                    {
+                        await pgConnection.CloseAsync();
+                        _logger.LogInformation("PostgreSQL connection closed");
+                    }
+                    await pgConnection.DisposeAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning($"Error closing PostgreSQL connection: {ex.Message}");
+                }
+            }
+            
+            if (sqlConnection != null)
+            {
+                try
+                {
+                    if (sqlConnection.State == ConnectionState.Open)
+                    {
+                        await sqlConnection.CloseAsync();
+                        _logger.LogInformation("SQL Server connection closed");
+                    }
+                    await sqlConnection.DisposeAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning($"Error closing SQL Server connection: {ex.Message}");
+                }
+            }
         }
 
         stopwatch.Stop();

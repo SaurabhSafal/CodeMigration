@@ -1,0 +1,438 @@
+<!-- Binary Migration Status Component -->
+<!-- Add this to your migration UI after the main migration card -->
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/6.0.1/signalr.min.js"></script>
+
+<style>
+    .binary-migration-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 16px;
+        padding: 24px;
+        margin-top: 20px;
+        color: white;
+        box-shadow: 0 8px 16px rgba(102, 126, 234, 0.3);
+    }
+
+    .binary-migration-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 20px;
+    }
+
+    .binary-migration-header h3 {
+        margin: 0;
+        font-size: 1.25rem;
+        font-weight: 700;
+    }
+
+    .binary-migration-content {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        padding: 20px;
+        backdrop-filter: blur(10px);
+    }
+
+    .binary-status-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .binary-status-row:last-child {
+        border-bottom: none;
+    }
+
+    .binary-status-label {
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .binary-status-value {
+        font-size: 1.1rem;
+        font-weight: 700;
+    }
+
+    .binary-progress-bar-container {
+        width: 100%;
+        height: 30px;
+        background: rgba(255, 255, 255, 0.2);
+        border-radius: 15px;
+        overflow: hidden;
+        margin: 15px 0;
+    }
+
+    .binary-progress-bar {
+        height: 100%;
+        background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+        transition: width 0.3s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 14px;
+    }
+
+    .binary-operation-text {
+        background: rgba(255, 255, 255, 0.15);
+        padding: 10px 15px;
+        border-radius: 8px;
+        font-size: 13px;
+        margin-top: 12px;
+        font-style: italic;
+    }
+
+    .binary-migration-actions {
+        display: flex;
+        gap: 12px;
+        margin-top: 20px;
+    }
+
+    .btn-binary-start {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white;
+        border: none;
+        padding: 12px 24px;
+        border-radius: 10px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 1;
+    }
+
+    .btn-binary-start:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 16px rgba(16, 185, 129, 0.4);
+    }
+
+    .btn-binary-start:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    .binary-state-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .state-queued {
+        background: rgba(251, 191, 36, 0.2);
+        color: #fbbf24;
+    }
+
+    .state-running {
+        background: rgba(59, 130, 246, 0.2);
+        color: #3b82f6;
+    }
+
+    .state-completed {
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
+    }
+
+    .state-failed {
+        background: rgba(239, 68, 68, 0.2);
+        color: #ef4444;
+    }
+</style>
+
+<div id="binaryMigrationCard" class="binary-migration-card" style="display: none;">
+    <div class="binary-migration-header">
+        <i class="fas fa-file-upload fa-2x"></i>
+        <div style="flex: 1;">
+            <h3>Binary Attachment Migration</h3>
+            <small style="opacity: 0.9;">Background process for large file attachments</small>
+        </div>
+        <span id="binaryStateBadge" class="binary-state-badge state-queued">
+            <i class="fas fa-clock"></i>
+            <span>Ready</span>
+        </span>
+    </div>
+
+    <div class="binary-migration-content">
+        <div class="binary-status-row">
+            <div class="binary-status-label">
+                <i class="fas fa-database"></i>
+                <span>Total Files</span>
+            </div>
+            <div class="binary-status-value" id="binaryTotalFiles">-</div>
+        </div>
+
+        <div class="binary-status-row">
+            <div class="binary-status-label">
+                <i class="fas fa-check-circle"></i>
+                <span>Processed</span>
+            </div>
+            <div class="binary-status-value" id="binaryProcessedFiles">0</div>
+        </div>
+
+        <div class="binary-status-row">
+            <div class="binary-status-label">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span>Skipped</span>
+            </div>
+            <div class="binary-status-value" id="binarySkippedFiles">0</div>
+        </div>
+
+        <div class="binary-progress-bar-container">
+            <div id="binaryProgressBar" class="binary-progress-bar" style="width: 0%;">
+                <span id="binaryProgressText">0%</span>
+            </div>
+        </div>
+
+        <div class="binary-status-row">
+            <div class="binary-status-label">
+                <i class="fas fa-clock"></i>
+                <span>Elapsed Time</span>
+            </div>
+            <div class="binary-status-value" id="binaryElapsedTime">00:00:00</div>
+        </div>
+
+        <div id="binaryOperationText" class="binary-operation-text" style="display: none;">
+            <i class="fas fa-info-circle"></i>
+            <span id="binaryCurrentOperation">Initializing...</span>
+        </div>
+
+        <div id="binaryErrorMessage" class="alert alert-danger" style="display: none; margin-top: 15px;"></div>
+
+        <div class="binary-migration-actions">
+            <button id="btnStartBinary" class="btn-binary-start" onclick="startBinaryMigration()">
+                <i class="fas fa-play"></i>
+                <span>Start Binary Migration</span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let binaryMigrationConnection = null;
+    let currentBinaryJobId = null;
+    let currentBinaryMigrationId = null;
+
+    // Initialize SignalR connection for binary migration
+    function initializeBinarySignalR() {
+        if (binaryMigrationConnection) {
+            return Promise.resolve();
+        }
+
+        binaryMigrationConnection = new signalR.HubConnectionBuilder()
+            .withUrl("/migrationProgressHub")
+            .withAutomaticReconnect()
+            .build();
+
+        binaryMigrationConnection.on("BinaryMigrationProgress", (progress) => {
+            console.log("Binary migration progress:", progress);
+            updateBinaryMigrationUI(progress);
+        });
+
+        binaryMigrationConnection.onreconnecting(() => {
+            console.log("SignalR reconnecting...");
+        });
+
+        binaryMigrationConnection.onreconnected(() => {
+            console.log("SignalR reconnected");
+            if (currentBinaryMigrationId) {
+                binaryMigrationConnection.invoke("JoinMigrationGroup", currentBinaryMigrationId);
+            }
+        });
+
+        return binaryMigrationConnection.start()
+            .then(() => {
+                console.log("Binary migration SignalR connected");
+            })
+            .catch((err) => {
+                console.error("Error connecting to SignalR:", err);
+                return Promise.reject(err);
+            });
+    }
+
+    // Start binary migration
+    async function startBinaryMigration() {
+        const btn = document.getElementById('btnStartBinary');
+        const card = document.getElementById('binaryMigrationCard');
+
+        try {
+            // Initialize SignalR
+            await initializeBinarySignalR();
+
+            // Disable button
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Starting...</span>';
+
+            // Call API to start binary migration
+            const response = await fetch('/Migration/StartBinaryMigration', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ tableName: 'prattachment' })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                currentBinaryJobId = data.jobId;
+                currentBinaryMigrationId = data.migrationId;
+
+                // Join SignalR group
+                await binaryMigrationConnection.invoke("JoinMigrationGroup", currentBinaryMigrationId);
+
+                // Update UI
+                updateBinaryStateBadge('running');
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Running in Background</span>';
+
+                // Show operation text
+                document.getElementById('binaryOperationText').style.display = 'block';
+                document.getElementById('binaryCurrentOperation').textContent = 'Starting binary migration...';
+
+                // Poll for status updates as backup
+                startBinaryStatusPolling();
+            } else {
+                throw new Error(data.message || 'Failed to start binary migration');
+            }
+        } catch (error) {
+            console.error('Error starting binary migration:', error);
+            showBinaryError(error.message);
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-play"></i><span>Start Binary Migration</span>';
+        }
+    }
+
+    // Update binary migration UI with progress data
+    function updateBinaryMigrationUI(progress) {
+        document.getElementById('binaryTotalFiles').textContent = progress.TotalFiles || '-';
+        document.getElementById('binaryProcessedFiles').textContent = progress.ProcessedFiles || 0;
+        document.getElementById('binarySkippedFiles').textContent = progress.SkippedFiles || 0;
+
+        const percentage = progress.ProgressPercentage || 0;
+        document.getElementById('binaryProgressBar').style.width = percentage + '%';
+        document.getElementById('binaryProgressText').textContent = percentage + '%';
+
+        if (progress.ElapsedTime) {
+            document.getElementById('binaryElapsedTime').textContent = progress.ElapsedTime;
+        }
+
+        if (progress.CurrentOperation) {
+            document.getElementById('binaryOperationText').style.display = 'block';
+            document.getElementById('binaryCurrentOperation').textContent = progress.CurrentOperation;
+        }
+
+        // Update state badge
+        updateBinaryStateBadge(progress.State ? progress.State.toLowerCase() : 'running');
+
+        // Handle completion
+        if (progress.State === 'Completed') {
+            document.getElementById('btnStartBinary').disabled = true;
+            document.getElementById('btnStartBinary').innerHTML = '<i class="fas fa-check-circle"></i><span>Completed</span>';
+            stopBinaryStatusPolling();
+        }
+
+        // Handle failure
+        if (progress.State === 'Failed' && progress.ErrorMessage) {
+            showBinaryError(progress.ErrorMessage);
+            document.getElementById('btnStartBinary').disabled = false;
+            document.getElementById('btnStartBinary').innerHTML = '<i class="fas fa-exclamation-triangle"></i><span>Failed - Retry</span>';
+            stopBinaryStatusPolling();
+        }
+    }
+
+    // Update state badge
+    function updateBinaryStateBadge(state) {
+        const badge = document.getElementById('binaryStateBadge');
+        badge.className = 'binary-state-badge state-' + state;
+
+        const icons = {
+            'queued': 'fa-clock',
+            'running': 'fa-spinner fa-spin',
+            'completed': 'fa-check-circle',
+            'failed': 'fa-times-circle'
+        };
+
+        const labels = {
+            'queued': 'Queued',
+            'running': 'Running',
+            'completed': 'Completed',
+            'failed': 'Failed'
+        };
+
+        badge.innerHTML = `<i class="fas ${icons[state] || 'fa-clock'}"></i><span>${labels[state] || 'Unknown'}</span>`;
+    }
+
+    // Show binary migration error
+    function showBinaryError(message) {
+        const errorDiv = document.getElementById('binaryErrorMessage');
+        errorDiv.textContent = message;
+        errorDiv.style.display = 'block';
+    }
+
+    // Status polling as backup to SignalR
+    let binaryStatusPollingInterval = null;
+
+    function startBinaryStatusPolling() {
+        stopBinaryStatusPolling();
+
+        binaryStatusPollingInterval = setInterval(async () => {
+            if (!currentBinaryJobId) return;
+
+            try {
+                const response = await fetch(`/Migration/GetBinaryMigrationStatus/${currentBinaryJobId}`);
+                const data = await response.json();
+
+                if (data.success && data.status) {
+                    updateBinaryMigrationUI(data.status);
+
+                    // Stop polling if completed or failed
+                    if (data.status.state === 'Completed' || data.status.state === 'Failed') {
+                        stopBinaryStatusPolling();
+                    }
+                }
+            } catch (error) {
+                console.error('Error polling binary migration status:', error);
+            }
+        }, 5000); // Poll every 5 seconds
+    }
+
+    function stopBinaryStatusPolling() {
+        if (binaryStatusPollingInterval) {
+            clearInterval(binaryStatusPollingInterval);
+            binaryStatusPollingInterval = null;
+        }
+    }
+
+    // Show binary migration card when PRAttachment table is selected
+    function showBinaryMigrationCard() {
+        const card = document.getElementById('binaryMigrationCard');
+        card.style.display = 'block';
+    }
+
+    function hideBinaryMigrationCard() {
+        const card = document.getElementById('binaryMigrationCard');
+        card.style.display = 'none';
+    }
+
+    // Hook into existing loadMigrationCard function
+    const originalLoadMigrationCard = window.loadMigrationCard;
+    window.loadMigrationCard = function(table) {
+        originalLoadMigrationCard(table);
+        
+        // Show binary migration card only for prattachment table
+        if (table.toLowerCase() === 'prattachment') {
+            showBinaryMigrationCard();
+        } else {
+            hideBinaryMigrationCard();
+        }
+    };
+</script>

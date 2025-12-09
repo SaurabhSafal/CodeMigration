@@ -50,6 +50,7 @@ public class ARCApprovalAuthorityMigration : MigrationService
     {
         // Load valid foreign key IDs
         var validArcHeaderIds = await LoadValidIdsAsync(pgConn, "arc_header", "arc_header_id");
+        var validUserIds = await LoadValidIdsAsync(pgConn, "users", "user_id");
 
         int insertedCount = 0;
         int skippedCount = 0;
@@ -76,15 +77,33 @@ public class ARCApprovalAuthorityMigration : MigrationService
                 continue;
             }
 
+            // Validate created_by and modified_by
+            var createdBy = reader.IsDBNull(reader.GetOrdinal("CreatedBy")) ? (int?)null : Convert.ToInt32(reader["CreatedBy"]);
+            var modifiedBy = createdBy; // Using same value as source
+            
+            // Set to NULL if user ID is invalid
+            object createdByValue = DBNull.Value;
+            object modifiedByValue = DBNull.Value;
+            
+            if (createdBy.HasValue && validUserIds.Contains(createdBy.Value))
+            {
+                createdByValue = createdBy.Value;
+                modifiedByValue = createdBy.Value;
+            }
+            else if (createdBy.HasValue)
+            {
+                _logger.LogWarning($"Created_by user_id={createdBy} not found in users table, setting to NULL");
+            }
+
             var record = new Dictionary<string, object>
             {
                 ["arc_header_id"] = arcHeaderId.Value,
                 ["approved_by"] = reader.IsDBNull(reader.GetOrdinal("ApprovedBy")) ? (object)DBNull.Value : Convert.ToInt32(reader["ApprovedBy"]),
                 ["assign_date"] = reader["CreateDate"] ?? (object)DBNull.Value,
                 ["level"] = reader.IsDBNull(reader.GetOrdinal("Level")) ? (object)DBNull.Value : Convert.ToInt32(reader["Level"]),
-                ["created_by"] = reader["CreatedBy"] ?? (object)DBNull.Value,
+                ["created_by"] = createdByValue,
                 ["created_date"] = reader["CreateDate"] ?? (object)DBNull.Value,
-                ["modified_by"] = reader["CreatedBy"] ?? (object)DBNull.Value,
+                ["modified_by"] = modifiedByValue,
                 ["modified_date"] = reader["CreateDate"] ?? (object)DBNull.Value,
                 ["is_deleted"] = false,
                 ["deleted_by"] = DBNull.Value,

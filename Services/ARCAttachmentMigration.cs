@@ -35,10 +35,10 @@ public class ARCAttachmentMigration : MigrationService
             new { source = "UPLOADPATH", target = "upload_path" },
             new { source = "FILENAME", target = "file_name" },
             new { source = "Remarks", target = "remarks" },
-            new { source = "CreatedBy", target = "created_by" },
-            new { source = "-", target = "created_date" },
-            new { source = "-", target = "modified_by" },
-            new { source = "-", target = "modified_date" },
+            new { source = "-", target = "created_by", note = "Not in source table" },
+            new { source = "-", target = "created_date", note = "Not in source table" },
+            new { source = "-", target = "modified_by", note = "Not in source table" },
+            new { source = "-", target = "modified_date", note = "Not in source table" },
             new { source = "-", target = "is_deleted" },
             new { source = "-", target = "deleted_by" },
             new { source = "-", target = "deleted_date" }
@@ -49,6 +49,7 @@ public class ARCAttachmentMigration : MigrationService
     {
         // Load valid foreign key IDs
         var validArcHeaderIds = await LoadValidIdsAsync(pgConn, "arc_header", "arc_header_id");
+        // Note: No need to load validUserIds as TBL_ARCATTACHMENT doesn't have CreatedBy column
 
         int insertedCount = 0;
         int skippedCount = 0;
@@ -75,15 +76,17 @@ public class ARCAttachmentMigration : MigrationService
                 continue;
             }
 
+            // TBL_ARCATTACHMENT doesn't have CreatedBy column in MSSQL
+            // Set created_by to NULL for PostgreSQL
             var record = new Dictionary<string, object>
             {
                 ["arc_header_id"] = arcHeaderId.HasValue ? (object)arcHeaderId.Value : DBNull.Value,
                 ["upload_path"] = reader["UPLOADPATH"] ?? (object)DBNull.Value,
                 ["file_name"] = reader["FILENAME"] ?? (object)DBNull.Value,
                 ["remarks"] = reader["Remarks"] ?? (object)DBNull.Value,
-                ["created_by"] = reader["CreatedBy"] ?? (object)DBNull.Value,
+                ["created_by"] = DBNull.Value,
                 ["created_date"] = DBNull.Value,
-                ["modified_by"] = 0,
+                ["modified_by"] = DBNull.Value,
                 ["modified_date"] = DBNull.Value,
                 ["is_deleted"] = false,
                 ["deleted_by"] = DBNull.Value,

@@ -80,6 +80,11 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<PRAttachmentMigration>();
         services.AddScoped<PRBoqItemsMigration>();
+        
+        // Add background service for binary migrations
+        services.AddSingleton<BinaryAttachmentBackgroundService>();
+        services.AddHostedService(provider => provider.GetRequiredService<BinaryAttachmentBackgroundService>());
+        
         services.AddScoped<EventItemsMigration>();
         services.AddScoped<EventBoqItemsMigration>();
         services.AddScoped<AssignedEventVendorMigration>();

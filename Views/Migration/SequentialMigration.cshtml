@@ -601,7 +601,9 @@
                                         <th>#</th>
                                         <th>Table Name</th>
                                         <th>Status</th>
-                                        <th>Records</th>
+                                        <th>Records Inserted</th>
+                                        <th>Records Skipped</th>
+                                        <th>Total</th>
                                         <th>Duration</th>
                                     </tr>
                                 </thead>
@@ -916,31 +918,60 @@
                 const duration = ((endMigTime - startMigTime) / 1000).toFixed(2);
 
                 if (result.success) {
-                    const recordCount = extractRecordCount(result.message);
+                    // Extract record count - handle both formats
+                    let recordCount = 0;
+                    let skippedCount = 0;
+                    let insertedCount = 0;
+                    let detailMessage = result.message;
+                    
+                    // Check if result has details object (for EventMaster and similar)
+                    if (result.details) {
+                        if (result.details.successCount !== undefined) {
+                            recordCount = result.details.successCount;
+                            insertedCount = result.details.successCount;
+                            skippedCount = result.details.failedCount || 0;
+                            detailMessage = `Success: ${result.details.successCount}, Failed: ${result.details.failedCount || 0}`;
+                        }
+                    } else {
+                        // Extract from message
+                        recordCount = extractRecordCount(result.message);
+                        insertedCount = recordCount;
+                        
+                        // Try to extract skipped count if present
+                        const skippedMatch = result.message.match(/skipped[:\s]+(\d+)/i);
+                        if (skippedMatch) {
+                            skippedCount = parseInt(skippedMatch[1]);
+                        }
+                    }
                     
                     migrationResults.push({
                         table: migration.display,
                         apiName: migration.api,
                         status: 'success',
                         records: recordCount,
+                        insertedRecords: insertedCount,
+                        skippedRecords: skippedCount,
                         duration: duration,
-                        details: result.message,
+                        details: detailMessage,
                         time: new Date().toLocaleTimeString(),
-                        errorMessage: 'N/A'
+                        errorMessage: 'N/A',
+                        fullResponse: result
                     });
 
                     updateTimelineItem(currentIndex, 'success', 
-                        `✓ Migrated ${recordCount} records`, 
+                        `✓ Migrated ${insertedCount} records` + (skippedCount > 0 ? ` (Skipped: ${skippedCount})` : ''), 
                         `Completed in ${duration}s`);
 
-                    addLog(`✓ ${migration.display}: ${result.message}`, 'success');
-                    addResultRow(currentIndex + 1, migration.display, 'Success', recordCount, duration);
+                    addLog(`✓ ${migration.display}: ${detailMessage}`, 'success');
+                    addResultRow(currentIndex + 1, migration.display, 'Success', insertedCount, skippedCount, duration);
                 } else {
                     migrationResults.push({
                         table: migration.display,
                         apiName: migration.api,
                         status: 'error',
                         records: 0,
+                        insertedRecords: 0,
+                        skippedRecords: 0,
                         duration: duration,
                         details: result.error || 'Unknown error',
                         time: new Date().toLocaleTimeString(),
@@ -952,7 +983,7 @@
                         `Failed after ${duration}s`);
 
                     addLog(`✗ ${migration.display}: ${result.error || 'Unknown error'}`, 'error');
-                    addResultRow(currentIndex + 1, migration.display, 'Failed', 0, duration);
+                    addResultRow(currentIndex + 1, migration.display, 'Failed', 0, 0, duration);
                 }
             } catch (error) {
                 const endMigTime = new Date();
@@ -963,6 +994,8 @@
                     apiName: migration.api,
                     status: 'error',
                     records: 0,
+                    insertedRecords: 0,
+                    skippedRecords: 0,
                     duration: duration,
                     details: error.message,
                     time: new Date().toLocaleTimeString(),
@@ -974,7 +1007,7 @@
                     `Failed after ${duration}s`);
 
                 addLog(`✗ ${migration.display}: ${error.message}`, 'error');
-                addResultRow(currentIndex + 1, migration.display, 'Failed', 0, duration);
+                addResultRow(currentIndex + 1, migration.display, 'Failed', 0, 0, duration);
             }
 
             // Save state after each migration
@@ -1025,7 +1058,7 @@
             const failed = migrationResults.filter(r => r.status === 'error').length;
             const pending = migrations.length - completed - failed;
             const progress = Math.round((completed / migrations.length) * 100);
-            const totalRecords = migrationResults.reduce((sum, r) => sum + r.records, 0);
+            const totalRecords = migrationResults.reduce((sum, r) => sum + (r.insertedRecords || r.records || 0), 0);
 
             document.getElementById('completedCount').textContent = completed;
             document.getElementById('failedCount').textContent = failed;
@@ -1041,7 +1074,7 @@
                 const seconds = durationSec % 60;
                 document.getElementById('duration').textContent = `${minutes}m ${seconds}s`;
 
-                if (completed > 0) {
+                if (completed > 0 && durationSec > 0) {
                     const avgSpeed = (totalRecords / durationSec).toFixed(2);
                     document.getElementById('avgSpeed').textContent = `${avgSpeed} records/sec`;
                 }
@@ -1049,17 +1082,20 @@
         }
 
         // Add result row
-        function addResultRow(index, table, status, records, duration) {
+        function addResultRow(index, table, status, insertedRecords, skippedRecords, duration) {
             const tbody = document.getElementById('resultsTable');
             const row = document.createElement('tr');
             
             const statusColor = status === 'Success' ? '#28a745' : '#dc3545';
+            const totalRecords = insertedRecords + skippedRecords;
             
             row.innerHTML = `
                 <td>${index}</td>
                 <td><strong>${table}</strong></td>
                 <td style="color: ${statusColor}; font-weight: bold;">${status}</td>
-                <td>${records.toLocaleString()}</td>
+                <td>${insertedRecords.toLocaleString()}</td>
+                <td>${skippedRecords > 0 ? skippedRecords.toLocaleString() : '-'}</td>
+                <td>${totalRecords.toLocaleString()}</td>
                 <td>${duration}s</td>
             `;
             
@@ -1108,7 +1144,7 @@
                 return;
             }
 
-            addLog('Generating Excel report...', 'info');
+            addLog('Generating detailed Excel report...', 'info');
             
             // Prepare data for Excel
             const reportData = {
@@ -1116,7 +1152,7 @@
                     totalTables: migrations.length,
                     completed: migrationResults.filter(r => r.status === 'success').length,
                     failed: migrationResults.filter(r => r.status === 'error').length,
-                    totalRecords: migrationResults.reduce((sum, r) => sum + r.records, 0),
+                    totalRecords: migrationResults.reduce((sum, r) => sum + (r.insertedRecords || r.records || 0), 0),
                     totalSkipped: migrationResults.reduce((sum, r) => sum + (r.skippedRecords || 0), 0),
                     startTime: document.getElementById('startTime').textContent,
                     endTime: document.getElementById('endTime').textContent,
@@ -1127,7 +1163,7 @@
                     index: index + 1,
                     tableName: result.table,
                     status: result.status,
-                    recordsMigrated: result.records,
+                    recordsMigrated: result.insertedRecords || result.records || 0,
                     duration: result.duration,
                     skippedRecords: result.skippedRecords || 0,
                     skipReason: result.skipReason || 'N/A',
@@ -1135,12 +1171,12 @@
                 }))
             };
 
-            // Create CSV content
+            // Create CSV content with multiple sections (simulating sheets)
             let csvContent = "data:text/csv;charset=utf-8,";
             
             // Add Summary Section
-            csvContent += "MIGRATION SUMMARY REPORT\n";
-            csvContent += "Generated: " + new Date().toLocaleString() + "\n\n";
+            csvContent += "=== MIGRATION SUMMARY REPORT ===\n";
+            csvContent += "Generated:," + new Date().toLocaleString() + "\n\n";
             csvContent += "Metric,Value\n";
             csvContent += `Total Tables,${reportData.summary.totalTables}\n`;
             csvContent += `Completed Successfully,${reportData.summary.completed}\n`;
@@ -1150,56 +1186,154 @@
             csvContent += `Start Time,${reportData.summary.startTime}\n`;
             csvContent += `End Time,${reportData.summary.endTime}\n`;
             csvContent += `Total Duration,${reportData.summary.duration}\n`;
-            csvContent += `Average Speed,${reportData.summary.avgSpeed}\n\n`;
+            csvContent += `Average Speed,${reportData.summary.avgSpeed}\n\n\n`;
             
             // Add Detailed Results Section
-            csvContent += "DETAILED MIGRATION RESULTS\n";
-            csvContent += "#,Table Name,Status,Records Migrated,Records Skipped,Skip Reason,Duration (sec),Error Message\n";
+            csvContent += "=== DETAILED MIGRATION RESULTS ===\n";
+            csvContent += "Table Name,Records Skipped (Range/Details),Log Messages,Records Inserted,Total Records\n";
             
             reportData.details.forEach(detail => {
-                csvContent += `${detail.index},${detail.tableName},${detail.status},${detail.recordsMigrated},${detail.skippedRecords},"${detail.skipReason}",${detail.duration},"${detail.errorMessage}"\n`;
+                const skippedInfo = detail.skippedRecords > 0 
+                    ? `${detail.skippedRecords} records skipped` 
+                    : 'No records skipped';
+                
+                // Get table-specific logs
+                const tableLogs = [];
+                const consoleLogs = Array.from(document.querySelectorAll('#liveLog .log-entry'));
+                consoleLogs.forEach(logEntry => {
+                    const logText = logEntry.textContent || '';
+                    if (logText.toLowerCase().includes(detail.tableName.toLowerCase()) ||
+                        logText.includes(`migration: ${detail.tableName}`) ||
+                        logText.includes(`completed for ${detail.tableName}`)) {
+                        const cleanLog = logText.replace(/[\n\r]+/g, ' ').replace(/\[.*?\]\s*/, '').trim();
+                        if (!tableLogs.includes(cleanLog) && cleanLog.length > 0) {
+                            tableLogs.push(cleanLog);
+                        }
+                    }
+                });
+                
+                const logSummary = tableLogs.length > 0 
+                    ? tableLogs.slice(0, 3).join(' | ') // First 3 logs
+                    : 'No specific logs';
+                
+                const totalRecords = detail.recordsMigrated + detail.skippedRecords;
+                
+                // Escape quotes in strings
+                const escapedSkipped = skippedInfo.replace(/"/g, '""');
+                const escapedLogs = logSummary.replace(/"/g, '""');
+                
+                csvContent += `${detail.tableName},"${escapedSkipped}","${escapedLogs}",${detail.recordsMigrated},${totalRecords}\n`;
             });
+            csvContent += "\n\n";
             
             // Add Statistics Section
-            csvContent += "\nSTATISTICS BY STATUS\n";
+            csvContent += "=== STATISTICS BY STATUS ===\n";
             const successTables = reportData.details.filter(d => d.status === 'success');
             const failedTables = reportData.details.filter(d => d.status === 'error');
             
-            csvContent += "Status,Count,Total Records,Total Skipped\n";
-            csvContent += `Success,${successTables.length},${successTables.reduce((sum, t) => sum + t.recordsMigrated, 0)},${successTables.reduce((sum, t) => sum + t.skippedRecords, 0)}\n`;
-            csvContent += `Failed,${failedTables.length},${failedTables.reduce((sum, t) => sum + t.recordsMigrated, 0)},${failedTables.reduce((sum, t) => sum + t.skippedRecords, 0)}\n\n`;
+            csvContent += "Status,Count,Total Records,Total Skipped,Avg Duration\n";
+            const successAvgDuration = successTables.length > 0 ? (successTables.reduce((sum, t) => sum + parseFloat(t.duration || 0), 0) / successTables.length).toFixed(2) : '0.00';
+            const failedAvgDuration = failedTables.length > 0 ? (failedTables.reduce((sum, t) => sum + parseFloat(t.duration || 0), 0) / failedTables.length).toFixed(2) : '0.00';
+            
+            csvContent += `Success,${successTables.length},${successTables.reduce((sum, t) => sum + t.recordsMigrated, 0)},${successTables.reduce((sum, t) => sum + t.skippedRecords, 0)},${successAvgDuration}s\n`;
+            csvContent += `Failed,${failedTables.length},${failedTables.reduce((sum, t) => sum + t.recordsMigrated, 0)},${failedTables.reduce((sum, t) => sum + t.skippedRecords, 0)},${failedAvgDuration}s\n\n\n`;
             
             // Add Skipped Records Details if any
             const skippedTables = reportData.details.filter(d => d.skippedRecords > 0);
             if (skippedTables.length > 0) {
-                csvContent += "TABLES WITH SKIPPED RECORDS\n";
-                csvContent += "Table Name,Records Migrated,Records Skipped,Skip Reason\n";
+                csvContent += "=== TABLES WITH SKIPPED RECORDS ===\n";
+                csvContent += "Table Name,Records Migrated,Records Skipped,Skip %,Reason\n";
                 skippedTables.forEach(table => {
-                    csvContent += `${table.tableName},${table.recordsMigrated},${table.skippedRecords},"${table.skipReason}"\n`;
+                    const skipPercent = ((table.skippedRecords / (table.recordsMigrated + table.skippedRecords)) * 100).toFixed(2);
+                    const reason = table.skipReason.replace(/"/g, '""');
+                    csvContent += `${table.tableName},${table.recordsMigrated},${table.skippedRecords},${skipPercent}%,"${reason}"\n`;
                 });
-                csvContent += "\n";
+                csvContent += "\n\n";
             }
             
             // Add Failed Tables Details if any
             if (failedTables.length > 0) {
-                csvContent += "FAILED TABLES DETAIL\n";
+                csvContent += "=== FAILED TABLES DETAIL ===\n";
                 csvContent += "Table Name,Error Message,Duration\n";
                 failedTables.forEach(table => {
-                    csvContent += `${table.tableName},"${table.errorMessage}",${table.duration}\n`;
+                    const errorMsg = table.errorMessage.replace(/"/g, '""');
+                    csvContent += `${table.tableName},"${errorMsg}",${table.duration}\n`;
                 });
+                csvContent += "\n\n";
             }
+            
+            // Add Table-Specific Logs Section (New Feature!)
+            csvContent += "=== TABLE-SPECIFIC LOGS ===\n\n";
+            
+            // Group console logs by table (extract from log entries)
+            const consoleLogs = Array.from(document.querySelectorAll('#logContainer .log-entry'));
+            const tableLogsMap = new Map();
+            
+            reportData.details.forEach(detail => {
+                tableLogsMap.set(detail.tableName, []);
+            });
+            
+            consoleLogs.forEach(logEntry => {
+                const logText = logEntry.textContent || '';
+                const logType = logEntry.classList.contains('log-success') ? 'SUCCESS' :
+                               logEntry.classList.contains('log-error') ? 'ERROR' :
+                               logEntry.classList.contains('log-warning') ? 'WARNING' : 'INFO';
+                
+                // Try to match log to a table
+                reportData.details.forEach(detail => {
+                    if (logText.toLowerCase().includes(detail.tableName.toLowerCase()) ||
+                        logText.includes(`migration: ${detail.tableName}`) ||
+                        logText.includes(`completed for ${detail.tableName}`)) {
+                        
+                        // Avoid duplicate logs
+                        const cleanLog = logText.replace(/[\n\r]+/g, ' ').trim();
+                        if (!tableLogsMap.get(detail.tableName).includes(cleanLog)) {
+                            tableLogsMap.get(detail.tableName).push({
+                                type: logType,
+                                message: cleanLog
+                            });
+                        }
+                    }
+                });
+            });
+            
+            // Add logs for each table
+            reportData.details.forEach(detail => {
+                const logs = tableLogsMap.get(detail.tableName) || [];
+                if (logs.length > 0) {
+                    csvContent += `--- Logs for: ${detail.tableName} ---\n`;
+                    csvContent += "Log Type,Message\n";
+                    logs.forEach(log => {
+                        const msg = log.message.replace(/"/g, '""');
+                        csvContent += `${log.type},"${msg}"\n`;
+                    });
+                    csvContent += "\n";
+                }
+            });
+            
+            // Add Performance Analysis
+            csvContent += "\n=== PERFORMANCE ANALYSIS ===\n";
+            csvContent += "Table Name,Records/Second,Duration,Total Records\n";
+            reportData.details.forEach(detail => {
+                if (detail.status === 'success' && detail.duration > 0) {
+                    const recordsPerSecond = (detail.recordsMigrated / detail.duration).toFixed(2);
+                    csvContent += `${detail.tableName},${recordsPerSecond},${detail.duration}s,${detail.recordsMigrated}\n`;
+                }
+            });
 
             // Create download link
             const encodedUri = encodeURI(csvContent);
             const link = document.createElement("a");
             link.setAttribute("href", encodedUri);
-            link.setAttribute("download", `Migration_Report_${new Date().toISOString().split('T')[0]}.csv`);
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0];
+            link.setAttribute("download", `Migration_Report_Detailed_${timestamp}.csv`);
             document.body.appendChild(link);
             
             link.click();
             document.body.removeChild(link);
             
-            addLog('Excel report downloaded successfully!', 'success');
+            addLog('Detailed Excel report downloaded successfully!', 'success');
+            addLog('Report includes: Summary, Details, Statistics, Skipped Records, Failed Tables, Table-Specific Logs, and Performance Analysis', 'info');
         }
 
         // Run Seed Data

@@ -166,6 +166,9 @@ public class ARCSubMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        // Load valid user IDs
+        var validUserIds = await LoadValidIdsAsync(pgConn, "users", "user_id");
+        
         int insertedCount = 0;
         int batchNumber = 0;
         var batch = new List<Dictionary<string, object>>();
@@ -173,6 +176,32 @@ public class ARCSubMigration : MigrationService
         using var reader = await selectCmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
+            // Validate created_by and modified_by
+            var createdBy = reader.IsDBNull(reader.GetOrdinal("CreatedBy")) ? (int?)null : Convert.ToInt32(reader["CreatedBy"]);
+            var updatedBy = reader.IsDBNull(reader.GetOrdinal("UpdatedBy")) ? (int?)null : Convert.ToInt32(reader["UpdatedBy"]);
+            
+            // Set to NULL if user ID is invalid
+            object createdByValue = DBNull.Value;
+            object modifiedByValue = DBNull.Value;
+            
+            if (createdBy.HasValue && validUserIds.Contains(createdBy.Value))
+            {
+                createdByValue = createdBy.Value;
+            }
+            else if (createdBy.HasValue)
+            {
+                _logger.LogWarning($"Created_by user_id={createdBy} not found in users table, setting to NULL");
+            }
+            
+            if (updatedBy.HasValue && validUserIds.Contains(updatedBy.Value))
+            {
+                modifiedByValue = updatedBy.Value;
+            }
+            else if (updatedBy.HasValue)
+            {
+                _logger.LogWarning($"Modified_by user_id={updatedBy} not found in users table, setting to NULL");
+            }
+            
             var record = new Dictionary<string, object>
             {
                 ["arc_lines_id"] = reader["ARCSubId"],
@@ -193,9 +222,9 @@ public class ARCSubMigration : MigrationService
                 ["used_material_qty"] = reader["UsedItemQty"] ?? (object)DBNull.Value,
                 ["used_material_value"] = reader["UsedItemTotalValue"] ?? (object)DBNull.Value,
                 ["tax_id"] = reader["GSTID"] ?? (object)DBNull.Value,
-                ["created_by"] = reader["CreatedBy"] ?? (object)DBNull.Value,
+                ["created_by"] = createdByValue,
                 ["created_date"] = reader["CreatedDate"] ?? (object)DBNull.Value,
-                ["modified_by"] = reader["UpdatedBy"] ?? (object)DBNull.Value,
+                ["modified_by"] = modifiedByValue,
                 ["modified_date"] = reader["UpdatedDate"] ?? (object)DBNull.Value,
                 ["is_deleted"] = false,
                 ["deleted_by"] = DBNull.Value,
@@ -220,6 +249,21 @@ public class ARCSubMigration : MigrationService
         }
         _logger.LogInformation($"Migration finished. Total records inserted: {insertedCount}");
         return insertedCount;
+    }
+
+    private async Task<HashSet<int>> LoadValidIdsAsync(NpgsqlConnection pgConn, string tableName, string columnName)
+    {
+        var validIds = new HashSet<int>();
+        var sql = $"SELECT {columnName} FROM {tableName}";
+        using var cmd = new NpgsqlCommand(sql, pgConn);
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            if (!reader.IsDBNull(0))
+                validIds.Add(reader.GetInt32(0));
+        }
+        _logger.LogInformation($"Loaded {validIds.Count} valid IDs from {tableName}.{columnName}");
+        return validIds;
     }
 
     private async Task<int> InsertBatchAsync(NpgsqlConnection pgConn, List<Dictionary<string, object>> batch, NpgsqlTransaction? transaction = null, int batchNumber = 0)

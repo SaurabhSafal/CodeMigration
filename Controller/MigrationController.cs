@@ -51,6 +51,7 @@ public class MigrationController : Controller
     private readonly ARCAttachmentMigration _arcAttachmentMigration;
     private readonly ARCApprovalAuthorityMigration _arcApprovalAuthorityMigration;
     private readonly PRAttachmentMigration _prAttachmentMigration;
+    private readonly BinaryAttachmentBackgroundService _binaryAttachmentService;
     private readonly PRBoqItemsMigration _prBoqItemsMigration;
     private readonly EventItemsMigration _eventItemsMigration;
     private readonly EventBoqItemsMigration _eventBoqItemsMigration;
@@ -136,6 +137,7 @@ public class MigrationController : Controller
         ARCAttachmentMigration arcAttachmentMigration,
         ARCApprovalAuthorityMigration arcApprovalAuthorityMigration,
         PRAttachmentMigration prAttachmentMigration,
+        BinaryAttachmentBackgroundService binaryAttachmentService,
         PRBoqItemsMigration prBoqItemsMigration,
         EventItemsMigration eventItemsMigration,
         EventBoqItemsMigration eventBoqItemsMigration,
@@ -230,6 +232,7 @@ public class MigrationController : Controller
         _arcAttachmentMigration = arcAttachmentMigration;
         _arcApprovalAuthorityMigration = arcApprovalAuthorityMigration;
         _prAttachmentMigration = prAttachmentMigration;
+        _binaryAttachmentService = binaryAttachmentService;
         _prBoqItemsMigration = prBoqItemsMigration;
         _eventItemsMigration = eventItemsMigration;
         _eventBoqItemsMigration = eventBoqItemsMigration;
@@ -978,6 +981,10 @@ public class MigrationController : Controller
                         errors = result.Errors.Take(5).ToList() // Return first 5 errors
                     }
                 });
+            }
+            else if (request.Table.ToLower() == "eventsetting")
+            {
+                recordCount = await _eventSettingMigrationService.MigrateAsync();
             }
             else if (request.Table.ToLower() == "tax")
             {
@@ -2339,7 +2346,82 @@ public class MigrationController : Controller
             return Json(new { success = false, message = ex.Message });
         }
     }
+
+    /// <summary>
+    /// Start binary migration in background
+    /// </summary>
+    [HttpPost("StartBinaryMigration")]
+    public IActionResult StartBinaryMigration([FromBody] BinaryMigrationRequest request)
+    {
+        try
+        {
+            var migrationId = Guid.NewGuid().ToString();
+            var jobId = _binaryAttachmentService.EnqueueJob(request.TableName, migrationId);
+
+            return Json(new
+            {
+                success = true,
+                jobId = jobId,
+                migrationId = migrationId,
+                message = $"Binary migration for {request.TableName} has been queued"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"Error starting binary migration for {request.TableName}");
+            return Json(new { success = false, message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Get binary migration status
+    /// </summary>
+    [HttpGet("GetBinaryMigrationStatus/{jobId}")]
+    public IActionResult GetBinaryMigrationStatus(string jobId)
+    {
+        try
+        {
+            var status = _binaryAttachmentService.GetJobStatus(jobId);
+            
+            if (status == null)
+            {
+                return Json(new { success = false, message = "Job not found" });
+            }
+
+            return Json(new
+            {
+                success = true,
+                status = new
+                {
+                    jobId = status.JobId,
+                    migrationId = status.MigrationId,
+                    tableName = status.TableName,
+                    state = status.State.ToString(),
+                    totalFiles = status.TotalFiles,
+                    processedFiles = status.ProcessedFiles,
+                    skippedFiles = status.SkippedFiles,
+                    progressPercentage = status.ProgressPercentage,
+                    currentOperation = status.CurrentOperation,
+                    errorMessage = status.ErrorMessage,
+                    enqueuedAt = status.EnqueuedAt,
+                    startedAt = status.StartedAt,
+                    completedAt = status.CompletedAt
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"Error getting binary migration status for job {jobId}");
+            return Json(new { success = false, message = ex.Message });
+        }
+    }
 }
+
+public class BinaryMigrationRequest
+{
+    public string TableName { get; set; } = "";
+}
+
 public class MigrationRequest
 {
     public required string Table { get; set; }

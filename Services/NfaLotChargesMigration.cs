@@ -273,7 +273,7 @@ public class NfaLotChargesMigration : MigrationService
 
                 if (batch.Count >= BATCH_SIZE)
                 {
-                    int batchMigrated = await InsertBatchWithTransactionAsync(batch, pgConn);
+                    int batchMigrated = await InsertBatchWithTransactionAsync(batch, pgConn, transaction);
                     migratedRecords += batchMigrated;
                     batch.Clear();
                 }
@@ -282,7 +282,7 @@ public class NfaLotChargesMigration : MigrationService
             // Insert remaining records
             if (batch.Count > 0)
             {
-                int batchMigrated = await InsertBatchWithTransactionAsync(batch, pgConn);
+                int batchMigrated = await InsertBatchWithTransactionAsync(batch, pgConn, transaction);
                 migratedRecords += batchMigrated;
             }
 
@@ -359,16 +359,25 @@ public class NfaLotChargesMigration : MigrationService
         return map;
     }
 
-    private async Task<int> InsertBatchWithTransactionAsync(List<Dictionary<string, object>> batch, NpgsqlConnection pgConn)
+    private async Task<int> InsertBatchWithTransactionAsync(List<Dictionary<string, object>> batch, NpgsqlConnection pgConn, NpgsqlTransaction? parentTransaction = null)
     {
-        NpgsqlTransaction? batchTransaction = null;
+        int insertedCount = 0;
+
+        // Use parent transaction if provided, otherwise create a new one
+        NpgsqlTransaction? transaction = parentTransaction;
+        bool ownTransaction = false;
+        
+        if (transaction == null)
+        {
+            transaction = await pgConn.BeginTransactionAsync();
+            ownTransaction = true;
+        }
+
         try
         {
-            batchTransaction = await pgConn.BeginTransactionAsync();
-
             foreach (var record in batch)
             {
-                using var cmd = new NpgsqlCommand(InsertQuery, pgConn, batchTransaction);
+                using var cmd = new NpgsqlCommand(InsertQuery, pgConn, transaction);
 
                 foreach (var kvp in record)
                 {
@@ -376,19 +385,34 @@ public class NfaLotChargesMigration : MigrationService
                 }
 
                 await cmd.ExecuteNonQueryAsync();
+                insertedCount++;
             }
 
-            await batchTransaction.CommitAsync();
-            return batch.Count;
+            // Only commit if we created our own transaction
+            if (ownTransaction)
+            {
+                await transaction.CommitAsync();
+            }
+
+            return insertedCount;
         }
         catch (Exception ex)
         {
-            if (batchTransaction != null)
+            // Only rollback if we created our own transaction
+            if (ownTransaction && transaction != null)
             {
-                await batchTransaction.RollbackAsync();
+                await transaction.RollbackAsync();
             }
             _logger.LogError(ex, $"Error inserting batch of {batch.Count} records");
             throw;
+        }
+        finally
+        {
+            // Only dispose if we created our own transaction
+            if (ownTransaction && transaction != null)
+            {
+                await transaction.DisposeAsync();
+            }
         }
     }
 }

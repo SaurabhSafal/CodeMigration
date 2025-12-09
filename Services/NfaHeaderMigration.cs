@@ -11,10 +11,58 @@ public class NfaHeaderMigration : MigrationService
 {
     private const int BATCH_SIZE = 1000;
     private readonly ILogger<NfaHeaderMigration> _logger;
+    private HashSet<int> _validCurrencyIds = new HashSet<int>();
+    private HashSet<int> _validSupplierIds = new HashSet<int>();
+    private int _defaultCurrencyId = 1; // Will be loaded from DB
 
     public NfaHeaderMigration(IConfiguration configuration, ILogger<NfaHeaderMigration> logger) : base(configuration)
     {
         _logger = logger;
+    }
+    
+    // Load valid supplier IDs at the start of migration
+    private async Task LoadValidSupplierIdsAsync(NpgsqlConnection pgConn)
+    {
+        _validSupplierIds.Clear();
+        using var cmd = new NpgsqlCommand("SELECT supplier_id FROM supplier_master WHERE supplier_id IS NOT NULL ORDER BY supplier_id", pgConn);
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            _validSupplierIds.Add(reader.GetInt32(0));
+        }
+        
+        _logger.LogInformation($"Loaded {_validSupplierIds.Count} valid supplier IDs");
+    }
+    
+    // Load valid currency IDs at the start of migration
+    private async Task LoadValidCurrencyIdsAsync(NpgsqlConnection pgConn)
+    {
+        _validCurrencyIds.Clear();
+        using var cmd = new NpgsqlCommand("SELECT currency_id FROM currency_master WHERE currency_id IS NOT NULL ORDER BY currency_id", pgConn);
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            _validCurrencyIds.Add(reader.GetInt32(0));
+        }
+        
+        // Set default to first available currency, or try to find INR/USD
+        if (_validCurrencyIds.Count > 0)
+        {
+            // Prefer common currencies: 1 (often USD), 86 (INR if exists)
+            if (_validCurrencyIds.Contains(1)) _defaultCurrencyId = 1;
+            else if (_validCurrencyIds.Contains(86)) _defaultCurrencyId = 86;
+            else _defaultCurrencyId = _validCurrencyIds.First();
+        }
+        
+        _logger.LogInformation($"Loaded {_validCurrencyIds.Count} valid currency IDs. Default currency_id: {_defaultCurrencyId}");
+    }
+    
+    // Helper to validate and fix currency ID
+    private int ValidateCurrencyId(int? currencyId)
+    {
+        if (currencyId.HasValue && _validCurrencyIds.Contains(currencyId.Value))
+            return currencyId.Value;
+        return _defaultCurrencyId;
     }
 
     protected override string SelectQuery => @"
@@ -451,6 +499,12 @@ public class NfaHeaderMigration : MigrationService
 
         try
         {
+            // Load valid currency IDs first
+            await LoadValidCurrencyIdsAsync(pgConn);
+            
+            // Load valid supplier IDs
+            await LoadValidSupplierIdsAsync(pgConn);
+            
             // Load lookup data for codes
             var paymentTermCodes = await LoadPaymentTermCodesAsync(pgConn);
             var incotermCodes = await LoadIncotermCodesAsync(pgConn);
@@ -459,7 +513,7 @@ public class NfaHeaderMigration : MigrationService
             var purchaseGroupCodes = await LoadPurchaseGroupCodesAsync(pgConn);
             var plantCodes = await LoadPlantCodesAsync(pgConn);
 
-            _logger.LogInformation($"Loaded lookup data: PaymentTerms={paymentTermCodes.Count}, Incoterms={incotermCodes.Count}, PODocTypes={poDocTypes.Count}");
+            _logger.LogInformation($"Loaded lookup data: PaymentTerms={paymentTermCodes.Count}, Incoterms={incotermCodes.Count}, PODocTypes={poDocTypes.Count}, Suppliers={_validSupplierIds.Count}");
 
             using var sqlCommand = new SqlCommand(SelectQuery, sqlConn);
             sqlCommand.CommandTimeout = 300;
@@ -498,6 +552,15 @@ public class NfaHeaderMigration : MigrationService
                 {
                     skippedRecords++;
                     _logger.LogWarning($"Skipping record {awardEventMainIdValue} - VendorId is NULL or 0");
+                    continue;
+                }
+
+                // Skip if supplier_id doesn't exist in supplier_master
+                int vendorIdValue = Convert.ToInt32(vendorId);
+                if (!_validSupplierIds.Contains(vendorIdValue))
+                {
+                    skippedRecords++;
+                    _logger.LogWarning($"Skipping record {awardEventMainIdValue} - VendorId {vendorIdValue} not found in supplier_master");
                     continue;
                 }
 
@@ -617,11 +680,13 @@ public class NfaHeaderMigration : MigrationService
                     ["sales_phone_number"] = reader["TELEPHONE"] ?? DBNull.Value,
                     ["your_referance"] = reader["YOUR_REFERENCE"] ?? DBNull.Value,
                     ["our_referance"] = reader["OUR_REFERENCE"] ?? DBNull.Value,
-                    ["currency_id"] = reader["CurrencyId"] != DBNull.Value && Convert.ToInt32(reader["CurrencyId"]) > 0 
-                        ? reader["CurrencyId"] 
-                        : (reader["VendorCurrencyId"] != DBNull.Value && Convert.ToInt32(reader["VendorCurrencyId"]) > 0 
-                            ? reader["VendorCurrencyId"] 
-                            : (object)86),
+                    ["currency_id"] = ValidateCurrencyId(
+                        reader["CurrencyId"] != DBNull.Value && Convert.ToInt32(reader["CurrencyId"]) > 0 
+                            ? Convert.ToInt32(reader["CurrencyId"])
+                            : (reader["VendorCurrencyId"] != DBNull.Value && Convert.ToInt32(reader["VendorCurrencyId"]) > 0 
+                                ? Convert.ToInt32(reader["VendorCurrencyId"]) 
+                                : (int?)null)
+                    ),
                     ["type_of_category_id"] = reader["TypeofCategory"] ?? DBNull.Value,
                     ["po_post_date"] = reader["POCreatedDate"] ?? DBNull.Value,
                     ["price_variation_report_name"] = reader["ME2mScreenshotName"] ?? DBNull.Value,

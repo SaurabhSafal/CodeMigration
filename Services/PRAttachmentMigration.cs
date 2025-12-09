@@ -23,7 +23,7 @@ public class PRAttachmentMigration : MigrationService
 
     // Controls: how many metadata rows to include per COPY block
     private const int COPY_BATCH_ROWS = 5000; // large batch for COPY
-    private const int BINARY_COPY_BATCH = 200; // smaller for binary COPY to avoid long transactions
+    private const int BINARY_COPY_BATCH = 20; // MUCH smaller for binary COPY to avoid memory/transaction issues
     private const long MAX_BINARY_SIZE = 250 * 1024 * 1024; // 250 MB safety guard
 
     public PRAttachmentMigration(IConfiguration configuration, ILogger<PRAttachmentMigration> logger) : base(configuration)
@@ -40,20 +40,24 @@ public class PRAttachmentMigration : MigrationService
             t.UPLOADPATH,
             t.FILENAME,
             t.UPLOADEDBYID,
-            t.UPLOADDATE,
-            t.ISHEADERDOC,
-            t.CLIENTSAPID,
             t.PRTRANSID,
             t.Remarks,
             t.PRATTACHMENTDATA,
-            t.PR_ATTCHMNT_TYPE,
-            t.CREATEDBY,
-            t.CREATEDDATE,
-            t.MODIFIEDBY,
-            t.MODIFIEDDATE,
-            t.ISDELETED,
-            t.DELETEDBY,
-            t.DELETEDDATE
+            t.PR_ATTCHMNT_TYPE
+        FROM TBL_PRATTACHMENT t
+        ORDER BY t.PRATTACHMENTID";
+    
+    // Optimized query for metadata only (no binary column)
+    private string SelectMetadataQuery => @"
+        SELECT 
+            t.PRATTACHMENTID,
+            t.PRID,
+            t.UPLOADPATH,
+            t.FILENAME,
+            t.UPLOADEDBYID,
+            t.PRTRANSID,
+            t.Remarks,
+            t.PR_ATTCHMNT_TYPE
         FROM TBL_PRATTACHMENT t
         ORDER BY t.PRATTACHMENTID";
 
@@ -118,9 +122,7 @@ public class PRAttachmentMigration : MigrationService
     /// High level flow:
     /// 1) COPY metadata (everything except the binary column) into a temporary table using BeginBinaryImport.
     /// 2) MERGE from temp -> pr_attachments using INSERT ... ON CONFLICT DO UPDATE.
-    /// 3) For rows that have binary data, stream them in smaller batches: read SQLServer stream using GetStream()
-    ///    and perform another binary COPY into a temp table that includes the bytea column. Then UPDATE final table
-    ///    from this temp batch.
+    /// 3) Binary data is handled separately via background service (BinaryAttachmentBackgroundService)
     /// This avoids buffering large blobs in memory and avoids thousands of parameterized INSERTs.
     /// </summary>
     public async Task<int> MigrateAsync(CancellationToken cancellationToken = default)
@@ -132,10 +134,11 @@ public class PRAttachmentMigration : MigrationService
 
         await using var sqlConn = new SqlConnection(sqlConnString);
         await using var pgConn = new NpgsqlConnection(pgConnString);
+        
         await sqlConn.OpenAsync(cancellationToken);
         await pgConn.OpenAsync(cancellationToken);
 
-        _logger.LogInformation("Starting COPY-optimized PRAttachment migration (metadata -> merge; binaries -> stream COPY)");
+        _logger.LogInformation("Starting COPY-optimized PRAttachment migration (metadata only - binaries will be handled by background service)");
 
         // Phase 0: ensure target table has a suitable unique constraint used for ON CONFLICT
         // We'll assume unique on pr_attachment_id exists. If not, the merge statement must be adjusted.
@@ -146,125 +149,207 @@ public class PRAttachmentMigration : MigrationService
         // Phase 2: apply metadata merge into pr_attachments
         int merged = await MergeMetadataAsync(pgConn, cancellationToken);
 
-        // Phase 3: stream binaries in smaller batches
+        _logger.LogInformation($"Metadata migration completed: metadataRows={metadataRows}, merged={merged}. Binary migration will run in background.");
+        return merged; // merged count is the primary success metric
+    }
+
+    /// <summary>
+    /// Migrate only metadata (without binary data) - used for fast initial migration
+    /// </summary>
+    public async Task<int> MigrateMetadataOnlyAsync(CancellationToken cancellationToken = default)
+    {
+        return await MigrateAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Legacy method: Migrate both metadata and binaries synchronously (blocks until complete)
+    /// Use this only for small datasets or testing. For production, use MigrateAsync + background service.
+    /// </summary>
+    public async Task<int> MigrateSynchronousAsync(CancellationToken cancellationToken = default)
+    {
+        var sqlConnString = _configuration.GetConnectionString("SqlServer");
+        var pgConnString = _configuration.GetConnectionString("PostgreSql");
+        if (string.IsNullOrEmpty(sqlConnString) || string.IsNullOrEmpty(pgConnString))
+            throw new InvalidOperationException("Connection strings not configured");
+
+        await using var sqlConn = new SqlConnection(sqlConnString);
+        await using var pgConn = new NpgsqlConnection(pgConnString);
+        
+        await sqlConn.OpenAsync(cancellationToken);
+        await pgConn.OpenAsync(cancellationToken);
+
+        _logger.LogInformation("Starting SYNCHRONOUS PRAttachment migration (metadata + binaries)");
+
+        // Phase 1: COPY metadata
+        int metadataRows = await CopyMetadataAsync(sqlConn, pgConn, cancellationToken);
+
+        // Phase 2: Merge metadata
+        int merged = await MergeMetadataAsync(pgConn, cancellationToken);
+
+        // Phase 3: Stream binaries synchronously
         int binariesUpdated = await StreamBinariesAsync(sqlConn, pgConn, cancellationToken);
 
-        _logger.LogInformation($"Migration completed: metadataRows={metadataRows}, merged={merged}, binariesUpdated={binariesUpdated}");
-        return merged; // merged count is the primary success metric
+        _logger.LogInformation($"Synchronous migration completed: metadataRows={metadataRows}, merged={merged}, binariesUpdated={binariesUpdated}");
+        return merged;
     }
 
     private async Task<int> CopyMetadataAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Phase 1: Copying metadata into temporary table via binary COPY");
 
-        // Create temp table for metadata (no binary column)
-        var createTempSql = @"
-            CREATE TEMP TABLE tmp_pr_attachments_meta (
-                pr_attachment_id bigint,
-                erp_pr_lines_id bigint,
-                upload_path text,
-                file_name text,
-                remarks text,
-                is_header_doc boolean,
-                pr_attachment_extensions text,
-                created_by integer,
-                created_date timestamptz,
-                modified_by integer,
-                modified_date timestamptz,
-                is_deleted boolean,
-                deleted_by integer,
-                deleted_date timestamptz
-            ) ON COMMIT DROP;
-        ";
-
-        await using (var createCmd = new NpgsqlCommand(createTempSql, pgConn))
-            await createCmd.ExecuteNonQueryAsync(cancellationToken);
-
-        // We'll stream rows from SQL Server and use BeginBinaryImport to copy into tmp_pr_attachments_meta
-        var selectSql = SelectQuery; // inherited from base; should match column order
-        using var selectCmd = new SqlCommand(selectSql, sqlConn);
-        selectCmd.CommandTimeout = 600;
-        using var reader = await selectCmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, cancellationToken);
-
-        int rowCount = 0;
-        // Begin binary import
-        await using (var importer = pgConn.BeginBinaryImport(
-            "COPY tmp_pr_attachments_meta (pr_attachment_id, erp_pr_lines_id, upload_path, file_name, remarks, is_header_doc, pr_attachment_extensions, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) FROM STDIN (FORMAT BINARY)"))
+        try
         {
-            while (await reader.ReadAsync(cancellationToken))
+            // Create temp table for metadata (no binary column)
+            // Note: Don't use ON COMMIT DROP - we need the table to persist for COPY command
+            _logger.LogInformation("Creating temporary table...");
+            var createTempSql = @"
+                CREATE TEMP TABLE IF NOT EXISTS tmp_pr_attachments_meta (
+                    pr_attachment_id bigint,
+                    erp_pr_lines_id bigint,
+                    upload_path text,
+                    file_name text,
+                    remarks text,
+                    is_header_doc boolean,
+                    pr_attachment_extensions text,
+                    created_by integer,
+                    created_date timestamptz,
+                    modified_by integer,
+                    modified_date timestamptz,
+                    is_deleted boolean,
+                    deleted_by integer,
+                    deleted_date timestamptz
+                );
+                
+                -- Clear table if it exists from previous run
+                TRUNCATE TABLE tmp_pr_attachments_meta;
+            ";
+
+            await using (var createCmd = new NpgsqlCommand(createTempSql, pgConn))
+                await createCmd.ExecuteNonQueryAsync(cancellationToken);
+
+            _logger.LogInformation("Temporary table created. Starting data read from SQL Server...");
+
+            // First, check how many records we need to migrate
+            var countCmd = new SqlCommand("SELECT COUNT(*) FROM TBL_PRATTACHMENT", sqlConn);
+            var totalRecords = (int)await countCmd.ExecuteScalarAsync(cancellationToken);
+            _logger.LogInformation($"Total records to migrate: {totalRecords:N0}");
+
+            if (totalRecords == 0)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                // Read only required columns in EXACT SELECT order. Use SequentialAccess so don't call GetValue for large columns.
-                var prAttachmentId = reader.IsDBNull(0) ? (long?)null : Convert.ToInt64(reader.GetValue(0));
-                // skip PRID (1)
-                if (!reader.IsDBNull(1)) _ = reader.GetValue(1);
-                var uploadPath = reader.IsDBNull(2) ? null : reader.GetString(2);
-                var fileName = reader.IsDBNull(3) ? null : reader.GetString(3);
-                // skip uploadedById.. etc through column 7
-                for (int skip=4; skip<=7; skip++) if (!reader.IsDBNull(skip)) _ = reader.GetValue(skip);
-                var prTransId = reader.IsDBNull(8) ? (long?)null : Convert.ToInt64(reader.GetValue(8));
-                var remarks = reader.IsDBNull(9) ? null : reader.GetString(9);
-                // column 10 is binary - skip reading it here
-                if (!reader.IsDBNull(10)) {
-                    // IMPORTANT: skip the column so the reader moves forward but do NOT buffer the blob
-                    var stream = reader.GetStream(10);
-                    // consume into a small buffer and discard - this advances the reader without allocating big arrays
-                    var buffer = new byte[8192];
-                    while (true)
-                    {
-                        int read = await stream.ReadAsync(buffer, 0, buffer.Length, cancellationToken);
-                        if (read == 0) break;
-                    }
-                }
-                var prAttType = reader.IsDBNull(11) ? null : reader.GetString(11);
-                var createdBy = reader.IsDBNull(12) ? (int?)null : Convert.ToInt32(reader.GetValue(12));
-                var createdDate = reader.IsDBNull(13) ? (DateTime?)null : reader.GetDateTime(13);
-                var modifiedBy = reader.IsDBNull(14) ? (int?)null : Convert.ToInt32(reader.GetValue(14));
-                var modifiedDate = reader.IsDBNull(15) ? (DateTime?)null : reader.GetDateTime(15);
-                var isDeleted = !reader.IsDBNull(16) && Convert.ToInt32(reader.GetValue(16)) == 1;
-                var deletedBy = reader.IsDBNull(17) ? (int?)null : Convert.ToInt32(reader.GetValue(17));
-                var deletedDate = reader.IsDBNull(18) ? (DateTime?)null : reader.GetDateTime(18);
-
-                importer.StartRow();
-                importer.Write(prAttachmentId, NpgsqlDbType.Bigint);
-                importer.Write(prTransId, NpgsqlDbType.Bigint);
-                importer.Write(uploadPath, NpgsqlDbType.Text);
-                importer.Write(fileName, NpgsqlDbType.Text);
-                importer.Write(remarks, NpgsqlDbType.Text);
-                importer.Write(true, NpgsqlDbType.Boolean); // is_header_doc default true
-                importer.Write(prAttType, NpgsqlDbType.Text);
-                importer.Write(createdBy, NpgsqlDbType.Integer);
-                importer.Write(createdDate, NpgsqlDbType.TimestampTz);
-                importer.Write(modifiedBy, NpgsqlDbType.Integer);
-                importer.Write(modifiedDate, NpgsqlDbType.TimestampTz);
-                importer.Write(isDeleted, NpgsqlDbType.Boolean);
-                importer.Write(deletedBy, NpgsqlDbType.Integer);
-                importer.Write(deletedDate, NpgsqlDbType.TimestampTz);
-
-                rowCount++;
-
-                // commit importer periodically by completing and reopening every COPY_BATCH_ROWS rows to avoid huge transactions
-                if (rowCount % COPY_BATCH_ROWS == 0)
-                {
-                    await importer.CompleteAsync(cancellationToken);
-                    _logger.LogInformation($"Copied {rowCount:N0} metadata rows so far (intermediate commit)");
-                    // reopen a new importer to continue
-                    await using (var newImporter = pgConn.BeginBinaryImport(
-                        "COPY tmp_pr_attachments_meta (pr_attachment_id, erp_pr_lines_id, upload_path, file_name, remarks, is_header_doc, pr_attachment_extensions, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) FROM STDIN (FORMAT BINARY)"))
-                    {
-                        // swap reference using reflection-less approach: assign importer variable? For brevity we keep single importer and rely on larger batch sizes.
-                        // In production you may want to break into multiple transactions using temporary staging tables.
-                    }
-                }
+                _logger.LogWarning("No records found in TBL_PRATTACHMENT");
+                return 0;
             }
 
-            // finalize
-            await importer.CompleteAsync(cancellationToken);
-        }
+            // We'll stream rows from SQL Server and use BeginBinaryImport to copy into tmp_pr_attachments_meta
+            // IMPORTANT: Use SelectMetadataQuery which excludes the binary column for performance
+            var selectSql = SelectMetadataQuery; // NO BINARY COLUMN - much faster!
+            _logger.LogInformation("Executing SELECT query on SQL Server (metadata only, no binary data)...");
+            using var selectCmd = new SqlCommand(selectSql, sqlConn);
+            selectCmd.CommandTimeout = 0; // No timeout for large datasets
+            using var reader = await selectCmd.ExecuteReaderAsync(cancellationToken); // No need for SequentialAccess without blobs
+            _logger.LogInformation("SQL Server reader opened successfully. Starting COPY import...");
 
-        _logger.LogInformation($"Phase 1 complete: copied {rowCount:N0} metadata rows into tmp_pr_attachments_meta");
-        return rowCount;
+            int rowCount = 0;
+            int progressInterval = 10; // Log every 10 rows initially for debugging
+            
+            // Begin binary import
+            _logger.LogInformation("Initiating BeginBinaryImport...");
+            await using (var importer = pgConn.BeginBinaryImport(
+                "COPY tmp_pr_attachments_meta (pr_attachment_id, erp_pr_lines_id, upload_path, file_name, remarks, is_header_doc, pr_attachment_extensions, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) FROM STDIN (FORMAT BINARY)"))
+            {
+                _logger.LogInformation("Binary COPY import started. Reading first record from SQL Server...");
+                
+                while (await reader.ReadAsync(cancellationToken))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    try
+                    {
+                        // Read only required columns in EXACT SELECT order for SelectMetadataQuery (no binary column)
+                        // Column indexes: 0=PRATTACHMENTID,1=PRID,2=UPLOADPATH,3=FILENAME,4=UPLOADEDBYID,5=PRTRANSID,6=Remarks,7=PR_ATTCHMNT_TYPE
+                        var prAttachmentId = reader.IsDBNull(0) ? (long?)null : Convert.ToInt64(reader.GetValue(0));
+                        if (rowCount == 0)
+                            _logger.LogInformation($"First record ID: {prAttachmentId}");
+
+                        // skip PRID (1)
+                        if (!reader.IsDBNull(1)) _ = reader.GetValue(1);
+                        var uploadPath = reader.IsDBNull(2) ? null : reader.GetString(2);
+                        var fileName = reader.IsDBNull(3) ? null : reader.GetString(3);
+                        // skip uploadedById (4)
+                        if (!reader.IsDBNull(4)) _ = reader.GetValue(4);
+                        var prTransId = reader.IsDBNull(5) ? (long?)null : Convert.ToInt64(reader.GetValue(5));
+                        var remarks = reader.IsDBNull(6) ? null : reader.GetString(6);
+                        var prAttType = reader.IsDBNull(7) ? null : reader.GetString(7);
+
+                        // Set defaults for columns that don't exist in source
+                        var createdBy = (int?)0;
+                        var createdDate = (DateTime?)DateTime.UtcNow;
+                        var modifiedBy = (int?)null;
+                        var modifiedDate = (DateTime?)null;
+                        var isDeleted = false;
+                        var deletedBy = (int?)null;
+                        var deletedDate = (DateTime?)null;
+
+                        importer.StartRow();
+                        importer.Write(prAttachmentId, NpgsqlDbType.Bigint);
+                        importer.Write(prTransId, NpgsqlDbType.Bigint);
+                        importer.Write(uploadPath, NpgsqlDbType.Text);
+                        importer.Write(fileName, NpgsqlDbType.Text);
+                        importer.Write(remarks, NpgsqlDbType.Text);
+                        importer.Write(true, NpgsqlDbType.Boolean); // is_header_doc default true
+                        importer.Write(prAttType, NpgsqlDbType.Text);
+                        importer.Write(createdBy, NpgsqlDbType.Integer);
+                        importer.Write(createdDate, NpgsqlDbType.TimestampTz);
+                        importer.Write(modifiedBy, NpgsqlDbType.Integer);
+                        importer.Write(modifiedDate, NpgsqlDbType.TimestampTz);
+                        importer.Write(isDeleted, NpgsqlDbType.Boolean);
+                        importer.Write(deletedBy, NpgsqlDbType.Integer);
+                        importer.Write(deletedDate, NpgsqlDbType.TimestampTz);
+
+                        rowCount++;
+                        if (rowCount == 1)
+                        {
+                            _logger.LogInformation("First record written successfully!");
+                        }
+
+                        // Log progress
+                        if (rowCount % progressInterval == 0)
+                        {
+                            _logger.LogInformation($"Processed {rowCount:N0} / {totalRecords:N0} records ({(rowCount * 100.0 / totalRecords):F1}%)");
+                            if (rowCount == 100)
+                            {
+                                progressInterval = 500; // Log every 500 rows after first 100
+                                _logger.LogInformation("Switching to log every 500 records...");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, $"Error processing record at row {rowCount + 1}");
+                        throw;
+                    }
+
+                    // commit importer periodically by completing and reopening every COPY_BATCH_ROWS rows to avoid huge transactions
+                    if (rowCount % COPY_BATCH_ROWS == 0)
+                    {
+                        await importer.CompleteAsync(cancellationToken);
+                        _logger.LogInformation($"Batch commit: Copied {rowCount:N0} metadata rows so far");
+                    }
+                }
+
+                // finalize
+                _logger.LogInformation("Finalizing COPY import...");
+                await importer.CompleteAsync(cancellationToken);
+            }
+
+            _logger.LogInformation($"Phase 1 complete: copied {rowCount:N0} metadata rows into tmp_pr_attachments_meta");
+            return rowCount;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during metadata copy phase");
+            throw;
+        }
     }
 
     private async Task<int> MergeMetadataAsync(NpgsqlConnection pgConn, CancellationToken cancellationToken)
@@ -302,9 +387,20 @@ public class PRAttachmentMigration : MigrationService
     {
         _logger.LogInformation("Phase 3: Streaming binary attachments in batches (streaming from SQL Server to COPY binary)");
 
+        // First count how many binary records exist
+        var countBinaryCmd = new SqlCommand("SELECT COUNT(*) FROM TBL_PRATTACHMENT WHERE PRATTACHMENTDATA IS NOT NULL", sqlConn);
+        var totalBinaryRecords = (int)await countBinaryCmd.ExecuteScalarAsync(cancellationToken);
+        _logger.LogInformation($"Total binary attachments to migrate: {totalBinaryRecords:N0}");
+
+        if (totalBinaryRecords == 0)
+        {
+            _logger.LogInformation("No binary attachments found, skipping Phase 3");
+            return 0;
+        }
+
         // We'll select only rows that have binary data in source and exist in target (or whatever filter you need).
         // Adjust WHERE clause to limit to needed rows (e.g. migrated metadata only)
-        var selectBinarySql = @"SELECT PRATTACHMENTID, PRATTACHMENTDATA FROM TBL_PRATTACHMENT WHERE PRATTACHMENTDATA IS NOT NULL";
+        var selectBinarySql = @"SELECT PRATTACHMENTID, PRATTACHMENTDATA FROM TBL_PRATTACHMENT WHERE PRATTACHMENTDATA IS NOT NULL ORDER BY PRATTACHMENTID";
 
         using var selectCmd = new SqlCommand(selectBinarySql, sqlConn);
         selectCmd.CommandTimeout = 0; // might take long
@@ -313,18 +409,27 @@ public class PRAttachmentMigration : MigrationService
 
         var batch = new List<(long id, long size, Func<CancellationToken, Task<Stream>> streamFactory)>();
         int updated = 0;
+        int processedCount = 0;
+        int skippedLarge = 0;
+        int skippedEmpty = 0;
 
         while (await reader.ReadAsync(cancellationToken))
         {
             var id = reader.IsDBNull(0) ? throw new InvalidOperationException("Null PRATTACHMENTID") : Convert.ToInt64(reader.GetValue(0));
             long size = reader.IsDBNull(1) ? 0 : reader.GetBytes(1, 0, null, 0, 0);
 
+            processedCount++;
+
             if (size == 0)
+            {
+                skippedEmpty++;
                 continue;
+            }
 
             if (size > MAX_BINARY_SIZE)
             {
-                _logger.LogWarning($"Skipping large binary for PRATTACHMENTID {id} (size {size} bytes)");
+                _logger.LogWarning($"Skipping large binary for PRATTACHMENTID {id} (size {size:N0} bytes / {size / 1024 / 1024:N0} MB)");
+                skippedLarge++;
                 continue;
             }
 
@@ -349,44 +454,67 @@ public class PRAttachmentMigration : MigrationService
                 return (Stream)ms;
             }));
 
+            // Log progress every 50 files
+            if (processedCount % 50 == 0)
+            {
+                _logger.LogInformation($"Phase 3: Scanned {processedCount:N0} / {totalBinaryRecords:N0} files ({processedCount * 100.0 / totalBinaryRecords:F1}%), queued {batch.Count} in current batch");
+            }
+
             // When batch reaches threshold, flush via COPY
             if (batch.Count >= BINARY_COPY_BATCH)
             {
+                _logger.LogInformation($"Processing batch of {batch.Count} binary files...");
+                var batchStart = DateTime.UtcNow;
                 updated += await CopyBinaryBatchAsync(pgConn, batch, cancellationToken);
-                // Note: MemoryStreams will be disposed inside CopyBinaryBatchAsync
+                var batchDuration = (DateTime.UtcNow - batchStart).TotalSeconds;
+                _logger.LogInformation($"Batch complete: {batch.Count} files in {batchDuration:F1}s. Total updated: {updated:N0} / {totalBinaryRecords:N0} ({updated * 100.0 / totalBinaryRecords:F1}%)");
+                
+                // Clear batch and force garbage collection to free memory
                 batch.Clear();
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
             }
         }
 
+        // Process remaining batch
         if (batch.Count > 0)
         {
+            _logger.LogInformation($"Processing final batch of {batch.Count} binary files...");
             updated += await CopyBinaryBatchAsync(pgConn, batch, cancellationToken);
             batch.Clear();
+            GC.Collect();
         }
 
-        _logger.LogInformation($"Phase 3 complete: binaries updated: {updated}");
+        _logger.LogInformation($"Phase 3 complete: binaries updated: {updated:N0}, skipped (empty): {skippedEmpty:N0}, skipped (too large): {skippedLarge:N0}");
         return updated;
     }
 
     private async Task<int> CopyBinaryBatchAsync(NpgsqlConnection pgConn, List<(long id, long size, Func<CancellationToken, Task<Stream>> streamFactory)> batch, CancellationToken cancellationToken)
     {
         // Create a temp table for this batch that includes bytea
+        // Note: Each batch creates and drops its own temp table
         var createTempBin = @"
+            DROP TABLE IF EXISTS tmp_pr_attachments_bin;
             CREATE TEMP TABLE tmp_pr_attachments_bin (
                 pr_attachment_id bigint,
                 pr_attachment_data bytea
-            ) ON COMMIT DROP;";
+            );";
 
         await using (var createCmd = new NpgsqlCommand(createTempBin, pgConn))
             await createCmd.ExecuteNonQueryAsync(cancellationToken);
 
         // Begin binary import for this batch
+        var batchStartTime = DateTime.UtcNow;
+        int batchItemsProcessed = 0;
+        
         await using (var importer = pgConn.BeginBinaryImport("COPY tmp_pr_attachments_bin (pr_attachment_id, pr_attachment_data) FROM STDIN (FORMAT BINARY)"))
         {
             foreach (var item in batch)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
+                var itemStart = DateTime.UtcNow;
                 importer.StartRow();
                 importer.Write(item.id, NpgsqlDbType.Bigint);
 
@@ -397,11 +525,27 @@ public class PRAttachmentMigration : MigrationService
                 // This avoids materializing a single large byte[] in memory.
                 importer.Write(s, NpgsqlDbType.Bytea);
 
+                batchItemsProcessed++;
+                var itemElapsed = (DateTime.UtcNow - itemStart).TotalSeconds;
+                
+                // Log every 5 items to track progress
+                if (batchItemsProcessed % 5 == 0)
+                {
+                    _logger.LogInformation($"  -> Processed {batchItemsProcessed}/{batch.Count} items in this batch (last item: {itemElapsed:F2}s)");
+                }
+
                 // The stream will be disposed by 'await using' above
             }
 
+            _logger.LogInformation($"Completing binary import batch ({batchItemsProcessed} items)...");
+            var completeStart = DateTime.UtcNow;
             await importer.CompleteAsync(cancellationToken);
+            var completeElapsed = (DateTime.UtcNow - completeStart).TotalSeconds;
+            _logger.LogInformation($"Binary import batch completed in {completeElapsed:F2}s");
         }
+        
+        var totalBatchElapsed = (DateTime.UtcNow - batchStartTime).TotalSeconds;
+        _logger.LogInformation($"Total batch time (including merge): {totalBatchElapsed:F2}s");
 
         // Merge tmp_pr_attachments_bin into target table
         var mergeSql = @"

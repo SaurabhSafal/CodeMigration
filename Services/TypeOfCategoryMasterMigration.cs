@@ -63,7 +63,7 @@ public class TypeOfCategoryMasterMigration : MigrationService
         
         // Load all company IDs from company_master so we can insert each type_of_category row for every company
         var companyIds = new List<int>();
-        using (var compCmd = new NpgsqlCommand("SELECT company_id FROM company_master", pgConn))
+        using (var compCmd = new NpgsqlCommand("SELECT company_id FROM company_master", pgConn, transaction))
         {
             using var compReader = await compCmd.ExecuteReaderAsync();
             while (await compReader.ReadAsync())
@@ -71,17 +71,13 @@ public class TypeOfCategoryMasterMigration : MigrationService
                 if (!compReader.IsDBNull(0)) companyIds.Add(compReader.GetInt32(0));
             }
         }
+        
+        Console.WriteLine($"✓ Found {companyIds.Count} companies. Each type_of_category will be inserted for all companies.");
 
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await sqlCmd.ExecuteReaderAsync();
 
         Console.WriteLine($"✓ Query executed. Processing records...");
-        
-        using var pgCmd = new NpgsqlCommand(InsertQuery, pgConn);
-        if (transaction != null)
-        {
-            pgCmd.Transaction = transaction;
-        }
 
         int insertedCount = 0;
         int skippedCount = 0;
@@ -100,15 +96,45 @@ public class TypeOfCategoryMasterMigration : MigrationService
                 Console.WriteLine($"📊 Processed {totalReadCount} records so far... (Inserted: {insertedCount}, Skipped: {skippedCount})");
             }
 
+            var sourceId = reader["id"];
+            var categoryName = reader["CategoryType"];
+            
             // For each source row, insert one row per company
             foreach (var companyId in companyIds)
             {
                 try
                 {
-                    pgCmd.Parameters.Clear();
+                    // Use OVERRIDING SYSTEM VALUE to explicitly set the identity column
+                    var insertWithOverride = @"
+                        INSERT INTO type_of_category_master (
+                            type_of_category_id,
+                            type_of_category_name,
+                            company_id,
+                            created_by,
+                            created_date,
+                            modified_by,
+                            modified_date,
+                            is_deleted,
+                            deleted_by,
+                            deleted_date
+                        ) OVERRIDING SYSTEM VALUE VALUES (
+                            @type_of_category_id,
+                            @type_of_category_name,
+                            @company_id,
+                            @created_by,
+                            @created_date,
+                            @modified_by,
+                            @modified_date,
+                            @is_deleted,
+                            @deleted_by,
+                            @deleted_date
+                        )
+                        ON CONFLICT (type_of_category_id) DO NOTHING";
+                    
+                    using var pgCmd = new NpgsqlCommand(insertWithOverride, pgConn, transaction);
 
-                    pgCmd.Parameters.AddWithValue("@type_of_category_id", reader["id"] ?? DBNull.Value);
-                    pgCmd.Parameters.AddWithValue("@type_of_category_name", reader["CategoryType"] ?? DBNull.Value);
+                    pgCmd.Parameters.AddWithValue("@type_of_category_id", sourceId ?? DBNull.Value);
+                    pgCmd.Parameters.AddWithValue("@type_of_category_name", categoryName ?? DBNull.Value);
                     pgCmd.Parameters.AddWithValue("@company_id", companyId);
                     pgCmd.Parameters.AddWithValue("@created_by", DBNull.Value);
                     pgCmd.Parameters.AddWithValue("@created_date", DBNull.Value);
@@ -119,18 +145,28 @@ public class TypeOfCategoryMasterMigration : MigrationService
                     pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value);
 
                     int result = await pgCmd.ExecuteNonQueryAsync();
-                    if (result > 0) insertedCount++;
+                    if (result > 0) 
+                    {
+                        insertedCount++;
+                    }
+                    else
+                    {
+                        // ON CONFLICT DO NOTHING - record already exists
+                        skippedCount++;
+                        Console.WriteLine($"⚠️  Skipping duplicate: type_of_category_id={sourceId}, company_id={companyId}");
+                    }
                 }
                 catch (PostgresException pgEx)
                 {
                     skippedCount++;
-                    Console.WriteLine($"❌ Warning: failed to insert id {reader["id"]} for company {companyId}: {pgEx.Message}");
+                    Console.WriteLine($"❌ PostgreSQL error for id={sourceId}, company={companyId}: {pgEx.MessageText}");
+                    if (pgEx.Detail != null) Console.WriteLine($"   Detail: {pgEx.Detail}");
                     continue;
                 }
                 catch (Exception ex)
                 {
                     skippedCount++;
-                    Console.WriteLine($"❌ Error migrating id {reader["id"]} for company {companyId}: {ex.Message}");
+                    Console.WriteLine($"❌ Error migrating id={sourceId}, company={companyId}: {ex.Message}");
                     continue;
                 }
             }
@@ -139,11 +175,33 @@ public class TypeOfCategoryMasterMigration : MigrationService
         Console.WriteLine($"\n📊 Migration Summary:");
         Console.WriteLine($"   Total source records read: {totalReadCount}");
         Console.WriteLine($"   ✓ Successfully inserted rows: {insertedCount}");
-        Console.WriteLine($"   ❌ Skipped (errors): {skippedCount}");
+        Console.WriteLine($"   ❌ Skipped (errors/duplicates): {skippedCount}");
         
         if (totalReadCount == 0)
         {
             Console.WriteLine($"\n⚠️  WARNING: No records found in TBL_TypeOfCategory table!");
+        }
+        
+        // Reset the identity sequence to the max ID to avoid conflicts with future inserts
+        if (insertedCount > 0)
+        {
+            try
+            {
+                var resetSequenceQuery = @"
+                    SELECT setval(
+                        pg_get_serial_sequence('type_of_category_master', 'type_of_category_id'),
+                        COALESCE((SELECT MAX(type_of_category_id) FROM type_of_category_master), 1),
+                        true
+                    )";
+                
+                using var seqCmd = new NpgsqlCommand(resetSequenceQuery, pgConn, transaction);
+                var newSeqValue = await seqCmd.ExecuteScalarAsync();
+                Console.WriteLine($"✓ Reset identity sequence to {newSeqValue}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"⚠️  Warning: Failed to reset identity sequence: {ex.Message}");
+            }
         }
 
         return insertedCount;
