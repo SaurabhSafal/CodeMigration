@@ -154,9 +154,8 @@ ON CONFLICT (assigned_event_vendor_id) DO UPDATE SET
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
-        _logger.LogInformation("Starting AssignedEventVendor migration (USERTYPE = 'Vendor' only)...");
-        _migrationLogger?.LogInfo("Loading valid event and supplier IDs");
-
+        _migrationLogger = new MigrationLogger(_logger, "assigned_event_vendor");
+        _migrationLogger.LogInfo("Starting AssignedEventVendor migration (USERTYPE = 'Vendor' only)");
         int insertedCount = 0;
         int skippedCount = 0;
         int batchNumber = 0;
@@ -164,9 +163,7 @@ ON CONFLICT (assigned_event_vendor_id) DO UPDATE SET
 
         var validEventIds = await LoadValidEventIdsAsync(pgConn, transaction);
         var validSupplierIds = await LoadValidSupplierIdsAsync(pgConn, transaction);
-        _logger.LogInformation($"Loaded {validEventIds.Count} valid event IDs and {validSupplierIds.Count} valid supplier IDs.");
-        _migrationLogger?.LogInfo($"Loaded {validEventIds.Count} valid event IDs and {validSupplierIds.Count} valid supplier IDs");
-
+        _migrationLogger.LogInfo($"Loaded {validEventIds.Count} valid event IDs and {validSupplierIds.Count} valid supplier IDs");
         using var selectCmd = new SqlCommand(SelectQuery, sqlConn);
         selectCmd.CommandTimeout = 300;
         using var reader = await selectCmd.ExecuteReaderAsync();
@@ -185,8 +182,7 @@ ON CONFLICT (assigned_event_vendor_id) DO UPDATE SET
             // Validate required foreign keys
             if (eventId == DBNull.Value)
             {
-                _logger.LogWarning($"Skipping EVENTSELUSERID {eventSelUserId}: EVENTID is NULL.");
-                _migrationLogger?.LogSkipped("EVENTID is NULL", recordId, new Dictionary<string, object> { { "EVENTID", eventId } });
+                _migrationLogger.LogSkipped("EVENTID is NULL", recordId, new Dictionary<string, object> { { "EVENTID", eventId } });
                 skippedCount++;
                 continue;
             }
@@ -194,16 +190,14 @@ ON CONFLICT (assigned_event_vendor_id) DO UPDATE SET
             int eventIdValue = Convert.ToInt32(eventId);
             if (!validEventIds.Contains(eventIdValue))
             {
-                _logger.LogWarning($"Skipping EVENTSELUSERID {eventSelUserId}: EVENTID {eventIdValue} not found in event_master.");
-                _migrationLogger?.LogSkipped($"EVENTID {eventIdValue} not found in event_master", recordId, new Dictionary<string, object> { { "EVENTID", eventIdValue } });
+                _migrationLogger.LogSkipped($"EVENTID {eventIdValue} not found in event_master", recordId, new Dictionary<string, object> { { "EVENTID", eventIdValue } });
                 skippedCount++;
                 continue;
             }
 
             if (userId == DBNull.Value)
             {
-                _logger.LogWarning($"Skipping EVENTSELUSERID {eventSelUserId}: USERID is NULL.");
-                _migrationLogger?.LogSkipped("USERID is NULL", recordId, new Dictionary<string, object> { { "USERID", userId } });
+                _migrationLogger.LogSkipped("USERID is NULL", recordId, new Dictionary<string, object> { { "USERID", userId } });
                 skippedCount++;
                 continue;
             }
@@ -211,8 +205,7 @@ ON CONFLICT (assigned_event_vendor_id) DO UPDATE SET
             int userIdValue = Convert.ToInt32(userId);
             if (!validSupplierIds.Contains(userIdValue))
             {
-                _logger.LogWarning($"Skipping EVENTSELUSERID {eventSelUserId}: USERID {userIdValue} not found in supplier_master.");
-                _migrationLogger?.LogSkipped($"USERID {userIdValue} not found in supplier_master", recordId, new Dictionary<string, object> { { "USERID", userIdValue } });
+                _migrationLogger.LogSkipped($"USERID {userIdValue} not found in supplier_master", recordId, new Dictionary<string, object> { { "USERID", userIdValue } });
                 skippedCount++;
                 continue;
             }
@@ -261,28 +254,25 @@ ON CONFLICT (assigned_event_vendor_id) DO UPDATE SET
             if (batch.Count >= BATCH_SIZE)
             {
                 batchNumber++;
-                _logger.LogInformation($"Inserting batch {batchNumber} with {batch.Count} records...");
-                _migrationLogger?.LogInfo($"Inserting batch {batchNumber} with {batch.Count} records");
+                _migrationLogger.LogInfo($"Inserting batch {batchNumber} with {batch.Count} records");
                 insertedCount += await InsertBatchAsync(pgConn, batch, transaction, batchNumber);
                 batch.Clear();
             }
 
             if (processedCount % 1000 == 0)
             {
-                _migrationLogger?.LogInfo($"Processed {processedCount} records");
+                _migrationLogger.LogInfo($"Processed {processedCount} records");
             }
         }
 
         if (batch.Count > 0)
         {
             batchNumber++;
-            _logger.LogInformation($"Inserting final batch {batchNumber} with {batch.Count} records...");
-            _migrationLogger?.LogInfo($"Inserting final batch {batchNumber} with {batch.Count} records");
+            _migrationLogger.LogInfo($"Inserting final batch {batchNumber} with {batch.Count} records");
             insertedCount += await InsertBatchAsync(pgConn, batch, transaction, batchNumber);
         }
 
-        _logger.LogInformation($"AssignedEventVendor migration completed. Inserted: {insertedCount}, Skipped: {skippedCount}");
-        _migrationLogger?.LogInfo($"AssignedEventVendor migration completed. Inserted: {insertedCount}, Skipped: {skippedCount}");
+        _migrationLogger.LogInfo($"AssignedEventVendor migration completed. Inserted: {insertedCount}, Skipped: {skippedCount}");
         return insertedCount;
     }
 

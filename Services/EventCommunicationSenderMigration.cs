@@ -1,6 +1,7 @@
 using Microsoft.Data.SqlClient;
 using Npgsql;
 using System.Data;
+using DataMigration.Services;
 
 namespace DataMigration.Services
 {
@@ -37,6 +38,9 @@ namespace DataMigration.Services
 
         public async Task<int> MigrateAsync()
         {
+        _migrationLogger = new MigrationLogger(_logger, "event_communication_sender");
+        _migrationLogger.LogInfo("Starting migration");
+
             var sqlConnectionString = _configuration.GetConnectionString("SqlServer");
             var pgConnectionString = _configuration.GetConnectionString("PostgreSql");
 

@@ -5,11 +5,13 @@ using Microsoft.Data.SqlClient;
 using Npgsql;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
+using DataMigration.Services;
 
 public class ARCApprovalAuthorityMigration : MigrationService
 {
     private const int BATCH_SIZE = 1000;
     private readonly ILogger<ARCApprovalAuthorityMigration> _logger;
+    private MigrationLogger? _migrationLogger;
 
     protected override string SelectQuery => @"SELECT * FROM TBL_ARCApprovalAuthority ORDER BY ARCApprovalAuthorityId";
     protected override string InsertQuery => @"INSERT INTO arc_workflow (...) VALUES (...)"; // Not used, but required
@@ -25,6 +27,8 @@ public class ARCApprovalAuthorityMigration : MigrationService
     {
         _logger = logger;
     }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     public override List<object> GetMappings()
     {
@@ -48,6 +52,9 @@ public class ARCApprovalAuthorityMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "arc_workflow");
+        _migrationLogger.LogInfo("Starting migration");
+
         // Load valid foreign key IDs
         var validArcHeaderIds = await LoadValidIdsAsync(pgConn, "arc_header", "arc_header_id");
         var validUserIds = await LoadValidIdsAsync(pgConn, "users", "user_id");

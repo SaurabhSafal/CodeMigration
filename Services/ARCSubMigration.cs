@@ -4,9 +4,11 @@ using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
 using Microsoft.Extensions.Configuration;
+using DataMigration.Services;
 
 public class ARCSubMigration : MigrationService
 {
+    private MigrationLogger? _migrationLogger;
     private const int BATCH_SIZE = 1000;
     private readonly Microsoft.Extensions.Logging.ILogger<ARCSubMigration> _logger;
 
@@ -100,6 +102,8 @@ public class ARCSubMigration : MigrationService
         _logger = logger;
     }
 
+    public MigrationLogger? GetLogger() => _migrationLogger;
+
     protected override List<string> GetLogics()
     {
         return new List<string>
@@ -166,6 +170,9 @@ public class ARCSubMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "arc_lines");
+        _migrationLogger.LogInfo("Starting migration");
+
         // Load valid user IDs
         var validUserIds = await LoadValidIdsAsync(pgConn, "users", "user_id");
         

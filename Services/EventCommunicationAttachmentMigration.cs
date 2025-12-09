@@ -1,6 +1,7 @@
 using Microsoft.Data.SqlClient;
 using Npgsql;
 using System.Data;
+using DataMigration.Services;
 
 namespace DataMigration.Services
 {

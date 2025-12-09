@@ -6,11 +6,13 @@ using Npgsql;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Linq;
+using DataMigration.Services;
 
 public class SupplierTechnicalParameterMigration : MigrationService
 {
     private const int BATCH_SIZE = 1000;
     private readonly ILogger<SupplierTechnicalParameterMigration> _logger;
+    private MigrationLogger? _migrationLogger;
 
     protected override string SelectQuery => @"
         SELECT
@@ -71,6 +73,8 @@ public class SupplierTechnicalParameterMigration : MigrationService
         _logger = logger;
     }
 
+    public MigrationLogger? GetLogger() => _migrationLogger;
+
     protected override List<string> GetLogics()
     {
         return new List<string>
@@ -118,6 +122,9 @@ public class SupplierTechnicalParameterMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "supplier_technical_parameter");
+        _migrationLogger.LogInfo("Starting migration");
+
         _logger.LogInformation("Starting Supplier Technical Parameter migration...");
 
         int totalRecords = 0;

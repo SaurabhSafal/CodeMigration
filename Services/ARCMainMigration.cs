@@ -4,9 +4,12 @@ using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
 using Microsoft.Extensions.Configuration;
+using DataMigration.Services;
 
 public class ARCMainMigration : MigrationService
 {
+    private readonly ILogger<ARCMainMigration> _logger;
+    private MigrationLogger? _migrationLogger;
     private HashSet<int> _validCurrencyIds = new HashSet<int>();
     private HashSet<int> _validUserIds = new HashSet<int>();
     private int _defaultCurrencyId = 1; // Will be loaded from DB
@@ -102,8 +105,11 @@ public class ARCMainMigration : MigrationService
 
     public ARCMainMigration(IConfiguration configuration, ILogger<ARCMainMigration> logger) : base(configuration)
     {
+        _logger = logger;
         // ...existing code...
     }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -191,6 +197,9 @@ public class ARCMainMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "arc_header");
+        _migrationLogger.LogInfo("Starting migration");
+
         Console.WriteLine("🚀 Starting ARCMain migration...");
         
         // Load valid currency IDs and user IDs first

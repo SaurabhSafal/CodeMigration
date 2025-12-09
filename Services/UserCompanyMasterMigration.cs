@@ -6,11 +6,13 @@ using Npgsql;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Linq;
+using DataMigration.Services;
 
 public class UserCompanyMasterMigration : MigrationService
 {
     private const int BATCH_SIZE = 1000;
     private readonly ILogger<UserCompanyMasterMigration> _logger;
+    private MigrationLogger? _migrationLogger;
 
     protected override string SelectQuery => @"
         SELECT
@@ -58,6 +60,8 @@ public class UserCompanyMasterMigration : MigrationService
         _logger = logger;
     }
 
+    public MigrationLogger? GetLogger() => _migrationLogger;
+
     protected override List<string> GetLogics()
     {
         return new List<string>
@@ -99,6 +103,9 @@ public class UserCompanyMasterMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "user_company_master");
+        _migrationLogger.LogInfo("Starting migration");
+
         _logger.LogInformation("Starting User Company Master migration...");
 
         int totalRecords = 0;

@@ -4,9 +4,12 @@ using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
 using Microsoft.Extensions.Configuration;
+using DataMigration.Services;
 
 public class PurchaseOrganizationMasterMigration : MigrationService
 {
+    private readonly ILogger<PurchaseOrganizationMasterMigration> _logger;
+    private MigrationLogger? _migrationLogger;
     // SQL Server: TBL_PurchaseOrgMaster -> PostgreSQL: purchase_organization_master
     protected override string SelectQuery => @"
         SELECT 
@@ -43,7 +46,11 @@ public class PurchaseOrganizationMasterMigration : MigrationService
             @deleted_date
         )";
 
-    public PurchaseOrganizationMasterMigration(IConfiguration configuration) : base(configuration) { }
+    public PurchaseOrganizationMasterMigration(IConfiguration configuration, ILogger<PurchaseOrganizationMasterMigration> logger) : base(configuration)
+    {
+        _logger = logger; }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -63,6 +70,9 @@ public class PurchaseOrganizationMasterMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "purchase_organization_master");
+        _migrationLogger.LogInfo("Starting migration");
+
         Console.WriteLine("🚀 Starting PurchaseOrganizationMaster migration...");
         Console.WriteLine($"📋 Executing query...");
         

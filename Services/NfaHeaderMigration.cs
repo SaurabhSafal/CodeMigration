@@ -6,11 +6,13 @@ using Npgsql;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Linq;
+using DataMigration.Services;
 
 public class NfaHeaderMigration : MigrationService
 {
     private const int BATCH_SIZE = 1000;
     private readonly ILogger<NfaHeaderMigration> _logger;
+    private MigrationLogger? _migrationLogger;
     private HashSet<int> _validCurrencyIds = new HashSet<int>();
     private HashSet<int> _validSupplierIds = new HashSet<int>();
     private int _defaultCurrencyId = 1; // Will be loaded from DB
@@ -19,6 +21,8 @@ public class NfaHeaderMigration : MigrationService
     {
         _logger = logger;
     }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
     
     // Load valid supplier IDs at the start of migration
     private async Task LoadValidSupplierIdsAsync(NpgsqlConnection pgConn)
@@ -491,6 +495,9 @@ public class NfaHeaderMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "nfa_header");
+        _migrationLogger.LogInfo("Starting migration");
+
         _logger.LogInformation("Starting NFA Header migration...");
 
         int totalRecords = 0;

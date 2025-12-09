@@ -17,6 +17,8 @@ using NpgsqlTypes;
 
 public class UsersMasterMigration : MigrationService
 {
+    private readonly ILogger<UsersMasterMigration> _logger;
+    private MigrationLogger? _migrationLogger;
     private readonly AesEncryptionService _aesEncryptionService;
     private readonly IConfiguration _configuration;
     private readonly bool _fastMode;
@@ -105,8 +107,9 @@ public class UsersMasterMigration : MigrationService
             @is_deleted, @deleted_by, @deleted_date, @erp_username, @approval_head, @time_zone_country, @digital_signature_path
         )";
 
-    public UsersMasterMigration(IConfiguration configuration) : base(configuration)
+    public UsersMasterMigration(IConfiguration configuration, ILogger<UsersMasterMigration> logger) : base(configuration)
     {
+        _logger = logger;
         _configuration = configuration;
         _aesEncryptionService = new AesEncryptionService();
 
@@ -117,6 +120,8 @@ public class UsersMasterMigration : MigrationService
         _rawQueueCapacity = _configuration.GetValue<int?>("Migration:Users:RawQueueCapacity") ?? Math.Max(1000, _transformWorkerCount * 2000);
         _writeQueueCapacity = _configuration.GetValue<int?>("Migration:Users:WriteQueueCapacity") ?? Math.Max(5000, _transformWorkerCount * 2000);
     }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     private async Task<int> GetTotalRecordsAsync(SqlConnection sqlConn)
     {
@@ -167,6 +172,9 @@ public class UsersMasterMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "users");
+        _migrationLogger.LogInfo("Starting migration");
+
         var progress = new ConsoleMigrationProgress();
         var stopwatch = Stopwatch.StartNew();
         int totalRecords = await GetTotalRecordsAsync(sqlConn);

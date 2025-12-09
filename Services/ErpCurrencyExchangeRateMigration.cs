@@ -3,6 +3,7 @@ using Npgsql;
 using System.Data;
 using System.Text;
 using Microsoft.Extensions.Logging;
+using DataMigration.Services;
 
 namespace DataMigration.Services
 {

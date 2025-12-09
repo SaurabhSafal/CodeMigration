@@ -228,17 +228,16 @@ INSERT INTO erp_pr_lines (
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "erp_pr_lines");
+        _migrationLogger.LogInfo("Starting migration");
         var validUomIds = await LoadValidUomIdsAsync(pgConn, transaction);
-        _migrationLogger?.LogInfo($"Loaded {validUomIds.Count} valid UOM IDs from uom_master.");
-
+        _migrationLogger.LogInfo($"Loaded {validUomIds.Count} valid UOM IDs from uom_master.");
         int insertedCount = 0;
         int skippedCount = 0;
         int batchNumber = 0;
         var batch = new List<Dictionary<string, object>>();
-
         using var selectCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await selectCmd.ExecuteReaderAsync();
-
         while (await reader.ReadAsync())
         {
             var uomIdValue = reader["uom_id"];
@@ -246,22 +245,20 @@ INSERT INTO erp_pr_lines (
             if (uomIdValue != DBNull.Value)
             {
                 int uomId = Convert.ToInt32(uomIdValue);
-
                 if (uomId == 0)
                 {
                     skippedCount++;
-                    _migrationLogger?.LogSkipped(
+                    _migrationLogger.LogSkipped(
                         "UOM ID is 0",
                         $"PRTRANSID={prTransId}",
                         new Dictionary<string, object> { { "uom_id", uomId } }
                     );
                     continue;
                 }
-
                 if (!validUomIds.Contains(uomId))
                 {
                     skippedCount++;
-                    _migrationLogger?.LogSkipped(
+                    _migrationLogger.LogSkipped(
                         $"UOM ID {uomId} not found in uom_master",
                         $"PRTRANSID={prTransId}",
                         new Dictionary<string, object> { { "uom_id", uomId } }
@@ -269,7 +266,6 @@ INSERT INTO erp_pr_lines (
                     continue;
                 }
             }
-
             var record = new Dictionary<string, object>
             {
                 ["erp_pr_lines_id"] = reader["PRTRANSID"] ?? DBNull.Value,
@@ -346,9 +342,9 @@ INSERT INTO erp_pr_lines (
             if (batch.Count >= BATCH_SIZE)
             {
                 batchNumber++;
-                _migrationLogger?.LogInfo($"Starting batch {batchNumber} with {batch.Count} records...");
+                _migrationLogger.LogInfo($"Starting batch {batchNumber} with {batch.Count} records...");
                 insertedCount += await InsertBatchAsync(pgConn, batch, transaction, batchNumber);
-                _migrationLogger?.LogInfo($"Completed batch {batchNumber}. Total records inserted so far: {insertedCount}");
+                _migrationLogger.LogInfo($"Completed batch {batchNumber}. Total records inserted so far: {insertedCount}");
                 batch.Clear();
             }
         }
@@ -356,12 +352,12 @@ INSERT INTO erp_pr_lines (
         if (batch.Count > 0)
         {
             batchNumber++;
-            _migrationLogger?.LogInfo($"Starting batch {batchNumber} with {batch.Count} records...");
+            _migrationLogger.LogInfo($"Starting batch {batchNumber} with {batch.Count} records...");
             insertedCount += await InsertBatchAsync(pgConn, batch, transaction, batchNumber);
-            _migrationLogger?.LogInfo($"Completed batch {batchNumber}. Total records inserted so far: {insertedCount}");
+            _migrationLogger.LogInfo($"Completed batch {batchNumber}. Total records inserted so far: {insertedCount}");
         }
 
-        _migrationLogger?.LogInfo($"Migration finished. Total records inserted: {insertedCount}, Skipped: {skippedCount}");
+        _migrationLogger.LogInfo($"Migration finished. Total records inserted: {insertedCount}, Skipped: {skippedCount}");
         return insertedCount;
     }
 

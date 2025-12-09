@@ -1,12 +1,14 @@
 using Microsoft.Data.SqlClient;
 using Npgsql;
 using System.Data;
+using DataMigration.Services;
 
 namespace DataMigration.Services
 {
     public class EventSupplierPriceBidMigration
     {
         private readonly ILogger<EventSupplierPriceBidMigration> _logger;
+    private MigrationLogger? _migrationLogger;
         private readonly IConfiguration _configuration;
 
         public EventSupplierPriceBidMigration(IConfiguration configuration, ILogger<EventSupplierPriceBidMigration> logger)
@@ -14,6 +16,8 @@ namespace DataMigration.Services
             _configuration = configuration;
             _logger = logger;
         }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
         public List<object> GetMappings()
         {
@@ -33,6 +37,9 @@ namespace DataMigration.Services
 
         public async Task<int> MigrateAsync()
         {
+        _migrationLogger = new MigrationLogger(_logger, "event_supplier_price_bid");
+        _migrationLogger.LogInfo("Starting migration");
+
             var sqlConnectionString = _configuration.GetConnectionString("SqlServer");
             var pgConnectionString = _configuration.GetConnectionString("PostgreSql");
 

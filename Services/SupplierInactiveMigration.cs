@@ -8,6 +8,7 @@ using DataMigration.Services;
 
 public class SupplierInactiveMigration : MigrationService
 {
+    private MigrationLogger? _migrationLogger;
     private const int BATCH_SIZE = 1000;
     private readonly Microsoft.Extensions.Logging.ILogger<SupplierInactiveMigration> _logger;
     protected override string SelectQuery => @"
@@ -59,6 +60,8 @@ public class SupplierInactiveMigration : MigrationService
         _logger = logger;
     }
 
+    public MigrationLogger? GetLogger() => _migrationLogger;
+
     protected override List<string> GetLogics()
     {
         return new List<string>
@@ -99,6 +102,9 @@ public class SupplierInactiveMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "supplier_inactive");
+        _migrationLogger.LogInfo("Starting migration");
+
         int insertedCount = 0;
         int batchNumber = 0;
         var batch = new List<Dictionary<string, object>>();

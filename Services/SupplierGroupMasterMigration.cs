@@ -11,6 +11,8 @@ using DataMigration.Services;
 
 public class SupplierGroupMasterMigration : MigrationService
 {
+    private readonly ILogger<SupplierGroupMasterMigration> _logger;
+    private MigrationLogger? _migrationLogger;
     private const int BATCH_SIZE = 1000; // Process in batches of 1000 records
     private const int PROGRESS_UPDATE_INTERVAL = 100; // Update progress every 100 records
 
@@ -82,7 +84,11 @@ public class SupplierGroupMasterMigration : MigrationService
             deleted_date
         ) VALUES ";
 
-    public SupplierGroupMasterMigration(IConfiguration configuration) : base(configuration) { }
+    public SupplierGroupMasterMigration(IConfiguration configuration, ILogger<SupplierGroupMasterMigration> logger) : base(configuration)
+    {
+        _logger = logger; }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -419,6 +425,9 @@ public class SupplierGroupMasterMigration : MigrationService
     // Keep the original method for backward compatibility
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "supplier_groupmaster");
+        _migrationLogger.LogInfo("Starting migration");
+
         var progress = new ConsoleMigrationProgress();
         var stopwatch = Stopwatch.StartNew();
         

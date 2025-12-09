@@ -6,11 +6,13 @@ using Npgsql;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Linq;
+using DataMigration.Services;
 
 public class UserPriceBidNonPricingMigration : MigrationService
 {
     private const int BATCH_SIZE = 1000;
     private readonly ILogger<UserPriceBidNonPricingMigration> _logger;
+    private MigrationLogger? _migrationLogger;
 
     protected override string SelectQuery => @"
         SELECT
@@ -61,6 +63,8 @@ public class UserPriceBidNonPricingMigration : MigrationService
         _logger = logger;
     }
 
+    public MigrationLogger? GetLogger() => _migrationLogger;
+
     protected override List<string> GetLogics()
     {
         return new List<string>
@@ -104,6 +108,9 @@ public class UserPriceBidNonPricingMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "user_price_bid_non_pricing");
+        _migrationLogger.LogInfo("Starting migration");
+
         _logger.LogInformation("Starting User Price Bid Non Pricing migration...");
 
         int totalRecords = 0;

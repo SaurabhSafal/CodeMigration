@@ -5,11 +5,13 @@ using Microsoft.Data.SqlClient;
 using Npgsql;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using DataMigration.Services;
 
 public class EventItemsMigration : MigrationService
 {
     private const int BATCH_SIZE = 500;
     private readonly ILogger<EventItemsMigration> _logger;
+    private MigrationLogger? _migrationLogger;
 
     protected override string SelectQuery => @"
 SELECT
@@ -94,6 +96,8 @@ ON CONFLICT (event_item_id) DO UPDATE SET
         _logger = logger;
     }
 
+    public MigrationLogger? GetLogger() => _migrationLogger;
+
     protected override List<string> GetLogics() => new List<string>
     {
         "Direct", // event_item_id
@@ -158,6 +162,9 @@ ON CONFLICT (event_item_id) DO UPDATE SET
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "event_items");
+        _migrationLogger.LogInfo("Starting migration");
+
         _logger.LogInformation("Starting EventItems migration...");
         
         int insertedCount = 0;

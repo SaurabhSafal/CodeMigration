@@ -4,11 +4,13 @@ using System.Data;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using System;
+using DataMigration.Services;
 
 public class EventScheduleHistoryMigrationService
 {
     private readonly ILogger<EventScheduleHistoryMigrationService> _logger;
     private readonly IConfiguration _configuration;
+    private MigrationLogger? _migrationLogger;
 
     public EventScheduleHistoryMigrationService(IConfiguration configuration, ILogger<EventScheduleHistoryMigrationService> logger)
     {
@@ -38,18 +40,19 @@ public class EventScheduleHistoryMigrationService
         };
     }
 
+    public MigrationLogger? GetLogger() => _migrationLogger;
+
     public async Task<int> MigrateAsync()
     {
         int migratedCount = 0;
         int skippedCount = 0;
         var skippedEventIds = new List<int>();
-        
+        _migrationLogger = new MigrationLogger(_logger, "event_schedule_history");
+        _migrationLogger.LogInfo("Starting migration");
         using var sqlConnection = new SqlConnection(_configuration.GetConnectionString("SqlServer"));
         using var pgConnection = new NpgsqlConnection(_configuration.GetConnectionString("PostgreSql"));
         await sqlConnection.OpenAsync();
         await pgConnection.OpenAsync();
-
-        // Get all valid event_ids from event_master in PostgreSQL
         var validEventIds = new HashSet<int>();
         using (var checkCmd = new NpgsqlCommand("SELECT event_id FROM event_master", pgConnection))
         {
@@ -59,10 +62,7 @@ public class EventScheduleHistoryMigrationService
                 validEventIds.Add(checkReader.GetInt32(0));
             }
         }
-        
-        _logger.LogInformation($"Found {validEventIds.Count} valid event IDs in event_master table.");
-
-        // Query with join to get reason text from REASONID and conditional date logic based on EVENTTYPE
+        _migrationLogger.LogInfo($"Found {validEventIds.Count} valid event IDs in event_master table.");
         var selectQuery = @"
             SELECT 
                 es.EVENTSCHEDULARID,
@@ -81,57 +81,47 @@ public class EventScheduleHistoryMigrationService
             INNER JOIN TBL_EVENTMASTER em ON em.EVENTID = es.EVENTID
             LEFT JOIN TBL_REASONMASTER rm ON rm.ReasonID = es.REASONID
             ORDER BY es.EVENTSCHEDULARID";
-        
         using var sqlCmd = new SqlCommand(selectQuery, sqlConnection);
         using var reader = await sqlCmd.ExecuteReaderAsync();
-
         var copyCommand = @"COPY event_schedule_history (
             event_schedule_id, event_id, time_zone, time_country,
             event_start_date_time, event_end_date_time, event_schedule_change_remark,
             operation_type
         ) FROM STDIN (FORMAT TEXT, DELIMITER '|')";
-
         using var writer = await pgConnection.BeginTextImportAsync(copyCommand);
         var now = DateTime.UtcNow;
-
         while (await reader.ReadAsync())
         {
             var eventId = reader["EVENTID"] != DBNull.Value ? Convert.ToInt32(reader["EVENTID"]) : 0;
-            
-            // Skip if event_id doesn't exist in event_master
             if (!validEventIds.Contains(eventId))
             {
                 skippedCount++;
                 skippedEventIds.Add(eventId);
-                _logger.LogWarning($"Skipping event_schedule_history record {reader["EVENTSCHEDULARID"]} - event_id {eventId} not found in event_master");
+                _migrationLogger.LogSkipped($"event_id {eventId} not found in event_master", reader["EVENTSCHEDULARID"]?.ToString());
                 continue;
             }
-            
             var fields = new string[]
             {
-                FormatInteger(reader["EVENTSCHEDULARID"]),        // event_schedule_id (integer, NOT NULL)
-                FormatInteger(reader["EVENTID"]),                  // event_id (integer, NOT NULL)
-                FormatText(reader["TIMEZONE"]),                    // time_zone (character varying, NOT NULL)
-                FormatText(reader["TIMEZONECOUNTRY"]),             // time_country (character varying, NOT NULL)
-                FormatTimestamp(reader["StartDate"]),              // event_start_date_time (conditional: EVENTTYPE=1 ? OPENDATETIME : AUCTION_START_DATE_TIME)
-                FormatTimestamp(reader["EndDate"]),                // event_end_date_time (conditional: EVENTTYPE=1 ? CLOSEDATETIME : AUCTION_END_DATE_TIME)
-                FormatText(reader["Reason"]),                      // event_schedule_change_remark (from TBL_REASONMASTER via REASONID)
-                "INSERT"                                          // operation_type (character varying)
+                FormatInteger(reader["EVENTSCHEDULARID"]),
+                FormatInteger(reader["EVENTID"]),
+                FormatText(reader["TIMEZONE"]),
+                FormatText(reader["TIMEZONECOUNTRY"]),
+                FormatTimestamp(reader["StartDate"]),
+                FormatTimestamp(reader["EndDate"]),
+                FormatText(reader["Reason"]),
+                "INSERT"
             };
             var row = string.Join("|", fields);
             await writer.WriteLineAsync(row);
             migratedCount++;
+            _migrationLogger.LogInserted(reader["EVENTSCHEDULARID"]?.ToString());
         }
-        
         writer.Close();
-        
         if (skippedCount > 0)
         {
-            _logger.LogWarning($"Migration completed with {skippedCount} skipped records (missing event_id in event_master).");
-            _logger.LogWarning($"Skipped event_ids: {string.Join(", ", skippedEventIds.Distinct().OrderBy(x => x))}");
+            _migrationLogger.LogInfo($"Migration completed with {skippedCount} skipped records (missing event_id in event_master).", null, new Dictionary<string, object>{{"SkippedEventIds", string.Join(", ", skippedEventIds.Distinct().OrderBy(x => x))}});
         }
-        
-        _logger.LogInformation($"Migrated {migratedCount} event_schedule_history records. Skipped {skippedCount} records.");
+        _migrationLogger.LogInfo($"Migrated {migratedCount} event_schedule_history records. Skipped {skippedCount} records.");
         return migratedCount;
     }
 

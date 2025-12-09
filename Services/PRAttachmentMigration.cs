@@ -10,6 +10,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using NpgsqlTypes;
+using DataMigration.Services;
 
 // NOTE: This implementation assumes a recent Npgsql version that allows writing Stream values
 // directly to bytea fields via NpgsqlBinaryImporter (see Npgsql docs: supported types can be written as Stream).
@@ -19,6 +20,7 @@ using NpgsqlTypes;
 public class PRAttachmentMigration : MigrationService
 {
     private readonly ILogger<PRAttachmentMigration> _logger;
+    private MigrationLogger? _migrationLogger;
     private readonly IConfiguration _configuration;
 
     // Controls: how many metadata rows to include per COPY block
@@ -31,6 +33,8 @@ public class PRAttachmentMigration : MigrationService
         _configuration = configuration;
         _logger = logger;
     }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     // Required by base class MigrationService
     protected override string SelectQuery => @"
@@ -112,6 +116,9 @@ public class PRAttachmentMigration : MigrationService
     // Required by base class - implement the standard migration method
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "pr_attachments");
+        _migrationLogger.LogInfo("Starting migration");
+
         // This implementation uses the optimized COPY approach via MigrateAsync
         // Note: The standard approach would use transaction parameter, but COPY optimization works differently
         _logger.LogWarning("ExecuteMigrationAsync called - redirecting to optimized MigrateAsync method");

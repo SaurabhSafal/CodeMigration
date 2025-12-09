@@ -6,15 +6,22 @@ using Microsoft.Data.SqlClient;
 using Npgsql;
 using NpgsqlTypes;
 using Microsoft.Extensions.Configuration;
+using DataMigration.Services;
 
 public class WorkflowApprovalUserHistoryMigration : MigrationService
 {
+    private readonly ILogger<WorkflowApprovalUserHistoryMigration> _logger;
+    private MigrationLogger? _migrationLogger;
     protected override string SelectQuery => "SELECT WorkFlowSubSubHistoryId, WorkFlowMainHistoryId, WorkFlowSubHistoryId, WorkFlowMainId, WorkFlowSubId, WorkFlowSubSubId, ApprovedBy, AlternateApprovedBy, Level, CreatedBy, CreateDate FROM TBL_WorkFlowSubSub_History";
     
     protected override string InsertQuery => @"INSERT INTO workflow_approval_user_history (workflow_approval_user_history_id, workflow_approval_user_id, workflow_master_id, workflow_amount_id, approved_by, level, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) 
                                              VALUES (@workflow_approval_user_history_id, @workflow_approval_user_id, @workflow_master_id, @workflow_amount_id, @approved_by, @level, @created_by, @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date)";
 
-    public WorkflowApprovalUserHistoryMigration(IConfiguration configuration) : base(configuration) { }
+    public WorkflowApprovalUserHistoryMigration(IConfiguration configuration, ILogger<WorkflowApprovalUserHistoryMigration> logger) : base(configuration)
+    {
+        _logger = logger; }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -64,6 +71,9 @@ public class WorkflowApprovalUserHistoryMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "workflow_approval_user_history");
+        _migrationLogger.LogInfo("Starting migration");
+
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await sqlCmd.ExecuteReaderAsync();
 

@@ -11,6 +11,7 @@ using DataMigration.Services;
 public class SupplierOtherContactMigration : MigrationService
 {
     private readonly ILogger<SupplierOtherContactMigration> _logger;
+    private MigrationLogger? _migrationLogger;
     private HashSet<int> _validSupplierIds = new HashSet<int>();
     private const int BATCH_SIZE = 500; // Optimized batch size
     private const int PROGRESS_UPDATE_INTERVAL = 100;
@@ -68,6 +69,8 @@ public class SupplierOtherContactMigration : MigrationService
         _logger = logger;
     }
 
+    public MigrationLogger? GetLogger() => _migrationLogger;
+
     protected override List<string> GetLogics()
     {
         return new List<string>
@@ -109,6 +112,9 @@ public class SupplierOtherContactMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "supplier_other_contact");
+        _migrationLogger.LogInfo("Starting migration");
+
         var stopwatch = Stopwatch.StartNew();
         _logger.LogInformation("Starting SupplierOtherContact migration...");
         

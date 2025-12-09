@@ -180,6 +180,9 @@ public class CompanyMasterMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "company_master");
+        _migrationLogger.LogInfo("Starting migration");
+
         Console.WriteLine("🚀 Starting CompanyMaster migration...");
         Console.WriteLine($"📋 Executing query...");
         

@@ -6,11 +6,13 @@ using Npgsql;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Linq;
+using DataMigration.Services;
 
 public class TechnicalApprovalScoreMigration : MigrationService
 {
     private const int BATCH_SIZE = 1000;
     private readonly ILogger<TechnicalApprovalScoreMigration> _logger;
+    private MigrationLogger? _migrationLogger;
 
     protected override string SelectQuery => @"
 SELECT
@@ -58,6 +60,8 @@ ON CONFLICT (technical_approval_score_id) DO UPDATE SET
         _logger = logger;
     }
 
+    public MigrationLogger? GetLogger() => _migrationLogger;
+
     protected override List<string> GetLogics() => new List<string>
     {
         "Direct", // technical_approval_score_id
@@ -102,6 +106,9 @@ ON CONFLICT (technical_approval_score_id) DO UPDATE SET
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "technical_approval_score");
+        _migrationLogger.LogInfo("Starting migration");
+
         _logger.LogInformation("Starting TechnicalApprovalScore migration...");
         
         int insertedCount = 0;

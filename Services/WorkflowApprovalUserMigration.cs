@@ -6,15 +6,22 @@ using Microsoft.Data.SqlClient;
 using Npgsql;
 using NpgsqlTypes;
 using Microsoft.Extensions.Configuration;
+using DataMigration.Services;
 
 public class WorkflowApprovalUserMigration : MigrationService
 {
+    private readonly ILogger<WorkflowApprovalUserMigration> _logger;
+    private MigrationLogger? _migrationLogger;
     protected override string SelectQuery => "SELECT AutoID, WorkFlowMainId, WorkFlowSubId, ApprovedBy, AlternateApprovedBy, CreateDate, Level, CreatedBy FROM TBL_WorkFlowSubSub";
     
     protected override string InsertQuery => @"INSERT INTO workflow_approval_user (workflow_approval_user_id, workflow_master_id, workflow_amount_id, approved_by, level, created_by, created_date, deleted_by, deleted_date, is_deleted, modified_by, modified_date) 
                                              VALUES (@workflow_approval_user_id, @workflow_master_id, @workflow_amount_id, @approved_by, @level, @created_by, @created_date, @deleted_by, @deleted_date, @is_deleted, @modified_by, @modified_date)";
 
-    public WorkflowApprovalUserMigration(IConfiguration configuration) : base(configuration) { }
+    public WorkflowApprovalUserMigration(IConfiguration configuration, ILogger<WorkflowApprovalUserMigration> logger) : base(configuration)
+    {
+        _logger = logger; }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -62,6 +69,9 @@ public class WorkflowApprovalUserMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "workflow_approval_user");
+        _migrationLogger.LogInfo("Starting migration");
+
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await sqlCmd.ExecuteReaderAsync();
 

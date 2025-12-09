@@ -5,15 +5,25 @@ using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using DataMigration.Services;
 
 public class WorkflowAmountHistoryMigration : MigrationService
 {
+    private readonly ILogger<WorkflowAmountHistoryMigration> _logger;
+    private MigrationLogger? _migrationLogger;
+
     protected override string SelectQuery => "SELECT WorkFlowSubHistoryId, WorkFlowHistoryMainId, WorkFlowSubId, WorkFlowMainId, FromAmount, ToAmount, AssignBuyerID, CreatedBy, CreateDate FROM TBL_WorkFlowSub_History";
     
     protected override string InsertQuery => @"INSERT INTO workflow_amount_history (workflow_amount_history_id, workflow_amount_id, workflow_master_id, from_amount, to_amount, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) 
                                              VALUES (@workflow_amount_history_id, @workflow_amount_id, @workflow_master_id, @from_amount, @to_amount, @created_by, @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date)";
 
-    public WorkflowAmountHistoryMigration(IConfiguration configuration) : base(configuration) { }
+    public WorkflowAmountHistoryMigration(IConfiguration configuration, ILogger<WorkflowAmountHistoryMigration> logger) : base(configuration) 
+    {
+        _logger = logger;
+    }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -190,6 +200,9 @@ public class WorkflowAmountHistoryMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "workflow_amount_history");
+        _migrationLogger.LogInfo("Starting migration");
+
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await sqlCmd.ExecuteReaderAsync();
 

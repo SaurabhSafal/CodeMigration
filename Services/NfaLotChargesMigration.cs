@@ -6,16 +6,20 @@ using Npgsql;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Linq;
+using DataMigration.Services;
 
 public class NfaLotChargesMigration : MigrationService
 {
     private const int BATCH_SIZE = 1000;
     private readonly ILogger<NfaLotChargesMigration> _logger;
+    private MigrationLogger? _migrationLogger;
 
     public NfaLotChargesMigration(IConfiguration configuration, ILogger<NfaLotChargesMigration> logger) : base(configuration)
     {
         _logger = logger;
     }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     protected override string SelectQuery => @"
         SELECT
@@ -139,6 +143,9 @@ public class NfaLotChargesMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "nfa_lot_charges");
+        _migrationLogger.LogInfo("Starting migration");
+
         _logger.LogInformation("Starting NFA Lot Charges migration...");
 
         int totalRecords = 0;

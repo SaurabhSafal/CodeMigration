@@ -12,14 +12,17 @@ using DataMigration.Services;
 
 public class SupplierPaymentIncotermMigration : MigrationService
 {
-    private readonly ILogger<SupplierPaymentIncotermMigration>? _logger;
+    private readonly ILogger<SupplierPaymentIncotermMigration> _logger;
+    private MigrationLogger? _migrationLogger;
     private const int BATCH_SIZE = 1000; // Batch size for bulk inserts
 
-    public SupplierPaymentIncotermMigration(IConfiguration configuration, ILogger<SupplierPaymentIncotermMigration>? logger = null) 
-        : base(configuration) 
-    { 
+    public SupplierPaymentIncotermMigration(IConfiguration configuration, ILogger<SupplierPaymentIncotermMigration> logger) 
+        : base(configuration)
+    {
         _logger = logger;
     }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
     
     protected override string SelectQuery => @"
         SELECT 
@@ -110,6 +113,9 @@ public class SupplierPaymentIncotermMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "supplier_payment_incoterm");
+        _migrationLogger.LogInfo("Starting migration");
+
         int insertedCount = 0;
         int skippedCount = 0;
         int totalCount = 0;

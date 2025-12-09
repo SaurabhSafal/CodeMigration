@@ -9,6 +9,7 @@ using DataMigration.Services;
 
 public class WorkflowAmountMigration : MigrationService
 {
+    private readonly ILogger<WorkflowAmountMigration> _logger;
     private MigrationLogger? _migrationLogger;
 
     protected override string SelectQuery => "SELECT WorkFlowSubId, WorkFlowMainId, FromAmount, ToAmount, CreateDate, AssignBuyerID, CreatedBy FROM TBL_WorkFlowSub";
@@ -16,7 +17,9 @@ public class WorkflowAmountMigration : MigrationService
     protected override string InsertQuery => @"INSERT INTO workflow_amount (workflow_amount_id, workflow_master_id, from_amount, to_amount, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) 
                                              VALUES (@workflow_amount_id, @workflow_master_id, @from_amount, @to_amount, @created_by, @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date)";
 
-    public WorkflowAmountMigration(IConfiguration configuration) : base(configuration) { }
+    public WorkflowAmountMigration(IConfiguration configuration, ILogger<WorkflowAmountMigration> logger) : base(configuration)
+    {
+        _logger = logger; }
 
     public MigrationLogger? GetLogger() => _migrationLogger;
 
@@ -143,6 +146,9 @@ public class WorkflowAmountMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "workflow_amount");
+        _migrationLogger.LogInfo("Starting migration");
+
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await sqlCmd.ExecuteReaderAsync();
 

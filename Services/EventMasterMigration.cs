@@ -4,10 +4,12 @@ using System.Data;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using NpgsqlTypes;
+using DataMigration.Services;
 
 public class EventMasterMigration : MigrationService
 {
     private readonly ILogger<EventMasterMigration> _logger;
+    private MigrationLogger? _migrationLogger;
     private readonly int _batchSize;
     private readonly int _transformWorkerCount;
     
@@ -25,6 +27,8 @@ public class EventMasterMigration : MigrationService
         _batchSize = configuration.GetValue<int?>("Migration:EventMaster:BatchSize") ?? 1000;
         _transformWorkerCount = configuration.GetValue<int?>("Migration:EventMaster:TransformWorkerCount") ?? Math.Max(1, Environment.ProcessorCount - 1);
     }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     // Helper method to sanitize strings - removes null bytes and invalid UTF8 characters
     private static string SanitizeString(string? input)
@@ -1297,6 +1301,9 @@ public class EventMasterMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "event_master");
+        _migrationLogger.LogInfo("Starting migration");
+
         // For EventMasterMigration, we use the optimized bulk logic
         // This is a wrapper to satisfy the base class interface
         var (successCount, failedCount, errors) = await MigrateAsync();

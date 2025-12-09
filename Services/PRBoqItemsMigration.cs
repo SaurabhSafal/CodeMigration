@@ -5,11 +5,13 @@ using Microsoft.Data.SqlClient;
 using Npgsql;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using DataMigration.Services;
 
 public class PRBoqItemsMigration : MigrationService
 {
     private const int BATCH_SIZE = 500;
     private readonly ILogger<PRBoqItemsMigration> _logger;
+    private MigrationLogger? _migrationLogger;
 
     protected override string SelectQuery => @"
 SELECT
@@ -64,6 +66,8 @@ INSERT INTO pr_boq_items (
     {
         _logger = logger;
     }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     protected override List<string> GetLogics() => new List<string>
     {
@@ -154,6 +158,9 @@ INSERT INTO pr_boq_items (
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "pr_boq_items");
+        _migrationLogger.LogInfo("Starting migration");
+
         // Load valid ERP PR Lines IDs
         var validErpPrLinesIds = await LoadValidErpPrLinesIdsAsync(pgConn, transaction);
         _logger.LogInformation($"Loaded {validErpPrLinesIds.Count} valid ERP PR Lines IDs from erp_pr_lines.");

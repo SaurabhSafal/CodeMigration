@@ -8,9 +8,12 @@ using NpgsqlTypes;
 using Microsoft.Extensions.Configuration;
 using System.Diagnostics;
 using System.Threading;
+using DataMigration.Services;
 
 public class WorkflowHistoryMigration : MigrationService
 {
+    private readonly ILogger<WorkflowHistoryMigration> _logger;
+    private MigrationLogger? _migrationLogger;
     private const int BATCH_SIZE = 5000; // Increased batch size for better performance
     private const int PROGRESS_UPDATE_INTERVAL = 1000; // Less frequent progress updates
     
@@ -25,7 +28,11 @@ public class WorkflowHistoryMigration : MigrationService
     protected override string InsertQuery => @"INSERT INTO workflow_history (workflow_history_id, workflow_for, workflow_for_id, approved_by, action_taken_date, action_taken_user, action_taken_remarks, action_status, workflow_for_status, workflow_level, workflow_master_id, workflow_round, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date, workflow_amount_id, workflow_approval_user_id, plant_id) 
                                              VALUES (@workflow_history_id, @workflow_for, @workflow_for_id, @approved_by, @action_taken_date, @action_taken_user, @action_taken_remarks, @action_status, @workflow_for_status, @workflow_level, @workflow_master_id, @workflow_round, @created_by, @created_date, @modified_by, @modified_date, @is_deleted, @deleted_by, @deleted_date, @workflow_amount_id, @workflow_approval_user_id, @plant_id)";
 
-    public WorkflowHistoryMigration(IConfiguration configuration) : base(configuration) { }
+    public WorkflowHistoryMigration(IConfiguration configuration, ILogger<WorkflowHistoryMigration> logger) : base(configuration)
+    {
+        _logger = logger; }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -182,6 +189,9 @@ public class WorkflowHistoryMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "workflow_history");
+        _migrationLogger.LogInfo("Starting migration");
+
         var stopwatch = Stopwatch.StartNew();
         var processedCount = 0;
         var insertedCount = 0;

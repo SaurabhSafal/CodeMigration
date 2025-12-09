@@ -1,12 +1,14 @@
 using Microsoft.Data.SqlClient;
 using Npgsql;
 using System.Data;
+using DataMigration.Services;
 
 namespace DataMigration.Services
 {
     public class SourceListMasterMigration
     {
         private readonly ILogger<SourceListMasterMigration> _logger;
+    private MigrationLogger? _migrationLogger;
         private readonly IConfiguration _configuration;
 
         public SourceListMasterMigration(IConfiguration configuration, ILogger<SourceListMasterMigration> logger)
@@ -14,6 +16,8 @@ namespace DataMigration.Services
             _configuration = configuration;
             _logger = logger;
         }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
         public List<object> GetMappings()
         {
@@ -38,6 +42,9 @@ namespace DataMigration.Services
 
         public async Task<int> MigrateAsync()
         {
+        _migrationLogger = new MigrationLogger(_logger, "sourcelist_master");
+        _migrationLogger.LogInfo("Starting migration");
+
             var sqlConnectionString = _configuration.GetConnectionString("SqlServer");
             var pgConnectionString = _configuration.GetConnectionString("PostgreSql");
 

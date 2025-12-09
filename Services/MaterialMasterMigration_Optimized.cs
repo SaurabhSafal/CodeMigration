@@ -7,12 +7,16 @@ using Npgsql;
 using System.Diagnostics;
 using System.Threading;
 using DataMigration.Services;
+using Microsoft.Extensions.Logging;
 
 public class MaterialMasterMigration : MigrationService
 {
     private const int BATCH_SIZE = 1000; // Process in batches of 1000 records
     private const int PROGRESS_UPDATE_INTERVAL = 100; // Update progress every 100 records
     
+    private MigrationLogger? _migrationLogger;
+    private readonly ILogger<MaterialMasterMigration> _logger;
+
     protected override string SelectQuery => @"
         SELECT 
             ITEMID, 
@@ -34,7 +38,10 @@ public class MaterialMasterMigration : MigrationService
         INSERT INTO material_master (material_id, material_code, material_name, material_description, uom_id, material_group_id, company_id, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) 
         VALUES ";
 
-    public MaterialMasterMigration(IConfiguration configuration) : base(configuration) { }
+    public MaterialMasterMigration(IConfiguration configuration, ILogger<MaterialMasterMigration> logger) : base(configuration)
+    {
+        _logger = logger;
+    }
 
     protected override List<string> GetLogics()
     {
@@ -508,16 +515,67 @@ public class MaterialMasterMigration : MigrationService
         return await cmd.ExecuteNonQueryAsync();
     }
 
+    public MigrationLogger? GetLogger() => _migrationLogger;
+
     // Keep the original method for backward compatibility
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        // Use the injected logger instead of ConsoleLogger
+        _migrationLogger = new MigrationLogger(_logger, "material_master");
         var progress = new ConsoleMigrationProgress();
         var stopwatch = Stopwatch.StartNew();
-        
-        // Get total records count
         int totalRecords = await GetTotalRecordsAsync(sqlConn);
-        
-        return await ExecuteOptimizedMigrationAsync(sqlConn, pgConn, totalRecords, progress, stopwatch, transaction);
+        int insertedCount = 0;
+        int skippedCount = 0;
+        int processedCount = 0;
+        var batch = new List<MaterialRecord>();
+        var validUomIds = await LoadValidUomIdsAsync(pgConn, transaction);
+        var defaultUomId = await GetOrCreateDefaultUomAsync(pgConn, transaction);
+        using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
+        sqlCmd.CommandTimeout = 600;
+        using var reader = await sqlCmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            processedCount++;
+            MaterialRecord? record = null;
+            try
+            {
+                record = ReadMaterialRecord(reader, processedCount, defaultUomId, validUomIds);
+            }
+            catch (Exception ex)
+            {
+                _migrationLogger.LogSkipped($"Error reading record {processedCount}: {ex.Message}", $"ITEMID={reader["ITEMID"]}");
+                skippedCount++;
+                continue;
+            }
+            if (record == null)
+            {
+                _migrationLogger.LogSkipped($"Skipped record {processedCount}: missing MaterialGroupId or ITEMCODE", $"ITEMID={reader["ITEMID"]}");
+                skippedCount++;
+                continue;
+            }
+            batch.Add(record);
+            if (batch.Count >= BATCH_SIZE || processedCount == totalRecords)
+            {
+                if (batch.Count > 0)
+                {
+                    int batchInserted = await InsertBatchAsync(pgConn, batch, transaction);
+                    insertedCount += batchInserted;
+                    foreach (var rec in batch)
+                    {
+                        _migrationLogger.LogInserted($"ITEMID={rec.MaterialId}");
+                    }
+                    batch.Clear();
+                }
+            }
+            if (processedCount % PROGRESS_UPDATE_INTERVAL == 0 || processedCount == totalRecords)
+            {
+                _migrationLogger.LogInfo($"Processed: {processedCount}/{totalRecords} | Inserted: {insertedCount} | Skipped: {skippedCount}");
+            }
+        }
+        stopwatch.Stop();
+        _migrationLogger.LogInfo($"Migration completed. Total processed: {processedCount}, Inserted: {insertedCount}, Skipped: {skippedCount}");
+        return insertedCount;
     }
 
     private class MaterialRecord

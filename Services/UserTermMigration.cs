@@ -6,11 +6,13 @@ using Npgsql;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Linq;
+using DataMigration.Services;
 
 public class UserTermMigration : MigrationService
 {
     private const int BATCH_SIZE = 1000;
     private readonly ILogger<UserTermMigration> _logger;
+    private MigrationLogger? _migrationLogger;
 
     protected override string SelectQuery => @"
 SELECT
@@ -44,6 +46,8 @@ ON CONFLICT (user_term_id) DO UPDATE SET
     {
         _logger = logger;
     }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     protected override List<string> GetLogics() => new List<string>
     {
@@ -85,6 +89,9 @@ ON CONFLICT (user_term_id) DO UPDATE SET
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "user_term");
+        _migrationLogger.LogInfo("Starting migration");
+
         _logger.LogInformation("Starting UserTerm migration...");
         
         int insertedCount = 0;

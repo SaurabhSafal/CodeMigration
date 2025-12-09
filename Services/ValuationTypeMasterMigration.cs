@@ -4,9 +4,12 @@ using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
 using Microsoft.Extensions.Configuration;
+using DataMigration.Services;
 
 public class ValuationTypeMasterMigration : MigrationService
 {
+    private readonly ILogger<ValuationTypeMasterMigration> _logger;
+    private MigrationLogger? _migrationLogger;
     // SQL Server: tbl_ValuationMaster -> PostgreSQL: valuation_type_master
     protected override string SelectQuery => @"
         SELECT 
@@ -40,7 +43,11 @@ public class ValuationTypeMasterMigration : MigrationService
             @deleted_date
         )";
 
-    public ValuationTypeMasterMigration(IConfiguration configuration) : base(configuration) { }
+    public ValuationTypeMasterMigration(IConfiguration configuration, ILogger<ValuationTypeMasterMigration> logger) : base(configuration)
+    {
+        _logger = logger; }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -59,6 +66,9 @@ public class ValuationTypeMasterMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "valuation_type_master");
+        _migrationLogger.LogInfo("Starting migration");
+
         Console.WriteLine("🚀 Starting ValuationTypeMaster migration...");
         Console.WriteLine($"📋 Executing query...");
         

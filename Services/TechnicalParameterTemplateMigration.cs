@@ -7,11 +7,13 @@ using System.Collections.Generic;
 using System.Data;
 using System.Threading.Tasks;
 using System.Linq;
+using DataMigration.Services;
 
 public class TechnicalParameterTemplateMigration : MigrationService
 {
     private const int BATCH_SIZE = 500;
     private readonly ILogger<TechnicalParameterTemplateMigration> _logger;
+    private MigrationLogger? _migrationLogger;
 
     public TechnicalParameterTemplateMigration(
         IConfiguration configuration,
@@ -20,6 +22,8 @@ public class TechnicalParameterTemplateMigration : MigrationService
     {
         _logger = logger;
     }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     protected override string SelectQuery => @"
         SELECT 
@@ -111,6 +115,9 @@ public class TechnicalParameterTemplateMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "technical_parameter_template");
+        _migrationLogger.LogInfo("Starting migration");
+
         int totalRecords = 0;
         int migratedRecords = 0;
         int skippedRecords = 0;

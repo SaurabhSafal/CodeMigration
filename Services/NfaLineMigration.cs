@@ -6,16 +6,20 @@ using Npgsql;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Linq;
+using DataMigration.Services;
 
 public class NfaLineMigration : MigrationService
 {
     private const int BATCH_SIZE = 1000;
     private readonly ILogger<NfaLineMigration> _logger;
+    private MigrationLogger? _migrationLogger;
 
     public NfaLineMigration(IConfiguration configuration, ILogger<NfaLineMigration> logger) : base(configuration)
     {
         _logger = logger;
     }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     protected override string SelectQuery => @"
         SELECT
@@ -267,6 +271,9 @@ public class NfaLineMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "nfa_line");
+        _migrationLogger.LogInfo("Starting migration");
+
         _logger.LogInformation("Starting NFA Line migration...");
 
         int totalRecords = 0;

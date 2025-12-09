@@ -4,9 +4,12 @@ using System.Threading.Tasks;
 using Microsoft.Data.SqlClient;
 using Npgsql;
 using Microsoft.Extensions.Configuration;
+using DataMigration.Services;
 
 public class TypeOfCategoryMasterMigration : MigrationService
 {
+    private readonly ILogger<TypeOfCategoryMasterMigration> _logger;
+    private MigrationLogger? _migrationLogger;
     // SQL Server: TBL_TypeOfCategory -> PostgreSQL: type_of_category_master
     protected override string SelectQuery => @"
         SELECT 
@@ -39,7 +42,11 @@ public class TypeOfCategoryMasterMigration : MigrationService
             @deleted_date
         )";
 
-    public TypeOfCategoryMasterMigration(IConfiguration configuration) : base(configuration) { }
+    public TypeOfCategoryMasterMigration(IConfiguration configuration, ILogger<TypeOfCategoryMasterMigration> logger) : base(configuration)
+    {
+        _logger = logger; }
+
+    public MigrationLogger? GetLogger() => _migrationLogger;
 
     protected override List<string> GetLogics()
     {
@@ -58,6 +65,9 @@ public class TypeOfCategoryMasterMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "type_of_category_master");
+        _migrationLogger.LogInfo("Starting migration");
+
         Console.WriteLine("🚀 Starting TypeOfCategoryMaster migration...");
         Console.WriteLine($"📋 Executing query...");
         
