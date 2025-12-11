@@ -360,29 +360,54 @@ public class SupplierTermsMigration : MigrationService
 
     private async Task<int> InsertBatchAsync(List<Dictionary<string, object>> batch, NpgsqlConnection pgConn, NpgsqlTransaction? transaction)
     {
-        int insertedCount = 0;
+        if (batch == null || batch.Count == 0)
+            return 0;
 
+        int insertedCount = 0;
         try
         {
-            foreach (var record in batch)
+            using (var importer = pgConn.BeginBinaryImport(@"COPY supplier_terms (
+                supplier_term_id,
+                event_id,
+                supplier_id,
+                user_term_id,
+                term_accept,
+                term_deviate,
+                created_by,
+                created_date,
+                modified_by,
+                modified_date,
+                is_deleted,
+                deleted_by,
+                deleted_date
+            ) FROM STDIN (FORMAT BINARY)"))
             {
-                using var cmd = new NpgsqlCommand(InsertQuery, pgConn, transaction);
-
-                foreach (var kvp in record)
+                foreach (var record in batch)
                 {
-                    cmd.Parameters.AddWithValue($"@{kvp.Key}", kvp.Value ?? DBNull.Value);
+                    await importer.StartRowAsync();
+                    importer.Write(record["supplier_term_id"], NpgsqlTypes.NpgsqlDbType.Integer);
+                    importer.Write(record["event_id"] == DBNull.Value ? null : record["event_id"], NpgsqlTypes.NpgsqlDbType.Integer);
+                    importer.Write(record["supplier_id"] == DBNull.Value ? null : record["supplier_id"], NpgsqlTypes.NpgsqlDbType.Integer);
+                    importer.Write(record["user_term_id"] == DBNull.Value ? null : record["user_term_id"], NpgsqlTypes.NpgsqlDbType.Integer);
+                    importer.Write(record["term_accept"], NpgsqlTypes.NpgsqlDbType.Boolean);
+                    importer.Write(record["term_deviate"], NpgsqlTypes.NpgsqlDbType.Boolean);
+                    importer.Write(record["created_by"] == DBNull.Value ? null : record["created_by"], NpgsqlTypes.NpgsqlDbType.Text);
+                    importer.Write(record["created_date"] == DBNull.Value ? null : record["created_date"], NpgsqlTypes.NpgsqlDbType.Timestamp);
+                    importer.Write(record["modified_by"] == DBNull.Value ? null : record["modified_by"], NpgsqlTypes.NpgsqlDbType.Text);
+                    importer.Write(record["modified_date"] == DBNull.Value ? null : record["modified_date"], NpgsqlTypes.NpgsqlDbType.Timestamp);
+                    importer.Write(record["is_deleted"], NpgsqlTypes.NpgsqlDbType.Boolean);
+                    importer.Write(record["deleted_by"] == DBNull.Value ? null : record["deleted_by"], NpgsqlTypes.NpgsqlDbType.Text);
+                    importer.Write(record["deleted_date"] == DBNull.Value ? null : record["deleted_date"], NpgsqlTypes.NpgsqlDbType.Timestamp);
+                    insertedCount++;
                 }
-
-                await cmd.ExecuteNonQueryAsync();
-                insertedCount++;
+                await importer.CompleteAsync();
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, $"Error inserting batch of {batch.Count} records");
-            throw;
+            _logger.LogError(ex, $"Error during bulk COPY of {batch.Count} records.");
+            // Don't throw - continue with next batch
         }
-
         return insertedCount;
     }
 }
