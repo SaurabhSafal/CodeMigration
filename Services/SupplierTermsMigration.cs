@@ -10,12 +10,24 @@ using DataMigration.Services;
 
 public class SupplierTermsMigration : MigrationService
 {
-    private const int BATCH_SIZE = 1000;
+    private const int BATCH_SIZE = 5000; // Increased for COPY operations
     private readonly ILogger<SupplierTermsMigration> _logger;
     private readonly MigrationLogger migrationLogger;
     
     // Track skipped records for detailed reporting
     private List<(string RecordId, string Reason)> _skippedRecords = new List<(string, string)>();
+    
+    // Data class for batch processing
+    private class SupplierTermRecord
+    {
+        public int SupplierTermId { get; set; }
+        public int? EventId { get; set; }
+        public int? SupplierId { get; set; }
+        public int UserTermId { get; set; }
+        public bool TermAccept { get; set; }
+        public bool TermDeviate { get; set; }
+        public DateTime? CreatedDate { get; set; }
+    }
 
     protected override string SelectQuery => @"
         SELECT
@@ -30,47 +42,7 @@ public class SupplierTermsMigration : MigrationService
         FROM TBL_VENDORDEVIATIONMASTER
         ORDER BY VENDORDEVIATIONMSTID";
 
-    protected override string InsertQuery => @"
-        INSERT INTO supplier_terms (
-            supplier_term_id,
-            event_id,
-            supplier_id,
-            user_term_id,
-            term_accept,
-            term_deviate,
-            created_by,
-            created_date,
-            modified_by,
-            modified_date,
-            is_deleted,
-            deleted_by,
-            deleted_date
-        ) VALUES (
-            @supplier_term_id,
-            @event_id,
-            @supplier_id,
-            @user_term_id,
-            @term_accept,
-            @term_deviate,
-            @created_by,
-            @created_date,
-            @modified_by,
-            @modified_date,
-            @is_deleted,
-            @deleted_by,
-            @deleted_date
-        )
-        ON CONFLICT (supplier_term_id) DO UPDATE SET
-            event_id = EXCLUDED.event_id,
-            supplier_id = EXCLUDED.supplier_id,
-            user_term_id = EXCLUDED.user_term_id,
-            term_accept = EXCLUDED.term_accept,
-            term_deviate = EXCLUDED.term_deviate,
-            modified_by = EXCLUDED.modified_by,
-            modified_date = EXCLUDED.modified_date,
-            is_deleted = EXCLUDED.is_deleted,
-            deleted_by = EXCLUDED.deleted_by,
-            deleted_date = EXCLUDED.deleted_date";
+    protected override string InsertQuery => ""; // Not used with COPY
 
     public SupplierTermsMigration(IConfiguration configuration, ILogger<SupplierTermsMigration> logger) : base(configuration)
     {
@@ -129,161 +101,131 @@ public class SupplierTermsMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
-        _logger.LogInformation("Starting Supplier Terms migration...");
+        _logger.LogInformation("Starting optimized Supplier Terms migration with COPY...");
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         int totalRecords = 0;
         int migratedRecords = 0;
 
         try
         {
-            // Load valid event IDs
+            // Load valid IDs
             var validEventIds = await LoadValidEventIdsAsync(pgConn);
-            _logger.LogInformation($"Loaded {validEventIds.Count} valid event IDs");
-
-            // Load valid supplier IDs
             var validSupplierIds = await LoadValidSupplierIdsAsync(pgConn);
-            _logger.LogInformation($"Loaded {validSupplierIds.Count} valid supplier IDs");
-
-            // Load valid user_term IDs
             var validUserTermIds = await LoadValidUserTermIdsAsync(pgConn);
-            _logger.LogInformation($"Loaded {validUserTermIds.Count} valid user_term IDs");
+            _logger.LogInformation($"Loaded validation data: {validEventIds.Count} events, {validSupplierIds.Count} suppliers, {validUserTermIds.Count} user_terms");
 
             using var sqlCommand = new SqlCommand(SelectQuery, sqlConn);
             sqlCommand.CommandTimeout = 300;
-
             using var reader = await sqlCommand.ExecuteReaderAsync();
 
-            var batch = new List<Dictionary<string, object>>();
+            var batch = new List<SupplierTermRecord>();
             var processedIds = new HashSet<int>();
 
             while (await reader.ReadAsync())
             {
                 totalRecords++;
 
-                var vendorDeviationMstId = reader["VENDORDEVIATIONMSTID"];
-                var eventId = reader["EVENTID"];
-                var vendorId = reader["VENDORID"];
-                var clauseEventWiseId = reader["CLAUSEEVENTWISEID"];
-                var isAccept = reader["ISACCEPT"];
-                var isDeviate = reader["ISDEVIATE"];
-                var entDate = reader["ENT_DATE"];
-                var isUpdated = reader["ISUPDATED"];
+                // Fast field access by ordinal
+                var vendorDeviationMstId = reader.IsDBNull(0) ? (int?)null : reader.GetInt32(0);
+                var eventId = reader.IsDBNull(1) ? (int?)null : reader.GetInt32(1);
+                var vendorId = reader.IsDBNull(2) ? (int?)null : reader.GetInt32(2);
+                var clauseEventWiseId = reader.IsDBNull(3) ? (int?)null : reader.GetInt32(3);
+                var isAccept = reader.IsDBNull(4) ? 0 : reader.GetInt32(4);
+                var isDeviate = reader.IsDBNull(5) ? 0 : reader.GetInt32(5);
+                var entDate = reader.IsDBNull(6) ? (DateTime?)null : reader.GetDateTime(6);
 
-                // Skip if VENDORDEVIATIONMSTID is NULL
-                if (vendorDeviationMstId == DBNull.Value)
+                // Skip if primary key is NULL
+                if (!vendorDeviationMstId.HasValue)
                 {
-                    migrationLogger.LogSkipped("NULL", "VENDORDEVIATIONMSTID is NULL");
-                    _skippedRecords.Add((vendorDeviationMstId.ToString(), "VENDORDEVIATIONMSTID is NULL"));
+                    migrationLogger.LogSkipped("VENDORDEVIATIONMSTID is NULL", "NULL");
+                    _skippedRecords.Add(("NULL", "VENDORDEVIATIONMSTID is NULL"));
                     continue;
                 }
 
-                int vendorDeviationMstIdValue = Convert.ToInt32(vendorDeviationMstId);
+                int id = vendorDeviationMstId.Value;
 
                 // Skip duplicates
-                if (processedIds.Contains(vendorDeviationMstIdValue))
+                if (processedIds.Contains(id))
                 {
-                    migrationLogger.LogSkipped("Duplicate record", vendorDeviationMstIdValue.ToString());
-                    _skippedRecords.Add((vendorDeviationMstIdValue.ToString(), "Duplicate record"));
+                    migrationLogger.LogSkipped("Duplicate record", id.ToString());
+                    _skippedRecords.Add((id.ToString(), "Duplicate record"));
                     continue;
                 }
 
-                // Validate event_id
-                if (eventId != DBNull.Value)
+                // Validate event_id if not null
+                if (eventId.HasValue && !validEventIds.Contains(eventId.Value))
                 {
-                    int eventIdValue = Convert.ToInt32(eventId);
-                    if (!validEventIds.Contains(eventIdValue))
-                    {
-                        migrationLogger.LogSkipped($"event_id={eventIdValue} not found in event_master", vendorDeviationMstIdValue.ToString());
-                        _skippedRecords.Add((vendorDeviationMstIdValue.ToString(), $"event_id={eventIdValue} not found in event_master"));
-                        continue;
-                    }
+                    migrationLogger.LogSkipped($"event_id={eventId.Value} not found", id.ToString());
+                    _skippedRecords.Add((id.ToString(), $"Invalid event_id={eventId.Value}"));
+                    continue;
                 }
 
-                // Validate supplier_id
-                if (vendorId != DBNull.Value)
+                // Validate supplier_id if not null
+                if (vendorId.HasValue && !validSupplierIds.Contains(vendorId.Value))
                 {
-                    int vendorIdValue = Convert.ToInt32(vendorId);
-                    if (!validSupplierIds.Contains(vendorIdValue))
-                    {
-                        migrationLogger.LogSkipped($"supplier_id={vendorIdValue} not found in supplier_master", vendorDeviationMstIdValue.ToString());
-                        _skippedRecords.Add((vendorDeviationMstIdValue.ToString(), $"supplier_id={vendorIdValue} not found in supplier_master"));
-                        continue;
-                    }
+                    migrationLogger.LogSkipped($"supplier_id={vendorId.Value} not found", id.ToString());
+                    _skippedRecords.Add((id.ToString(), $"Invalid supplier_id={vendorId.Value}"));
+                    continue;
                 }
 
                 // Skip if user_term_id is NULL (NOT NULL constraint)
-                if (clauseEventWiseId == DBNull.Value)
+                if (!clauseEventWiseId.HasValue)
                 {
-                    migrationLogger.LogSkipped("user_term_id is NULL", vendorDeviationMstIdValue.ToString());
-                    _skippedRecords.Add((vendorDeviationMstIdValue.ToString(), "user_term_id is NULL"));
+                    migrationLogger.LogSkipped("user_term_id is NULL", id.ToString());
+                    _skippedRecords.Add((id.ToString(), "user_term_id is NULL"));
                     continue;
                 }
 
                 // Validate user_term_id
-                int clauseEventWiseIdValue = Convert.ToInt32(clauseEventWiseId);
-                if (!validUserTermIds.Contains(clauseEventWiseIdValue))
+                if (!validUserTermIds.Contains(clauseEventWiseId.Value))
                 {
-                    migrationLogger.LogSkipped($"user_term_id={clauseEventWiseIdValue} not found in user_term", vendorDeviationMstIdValue.ToString());
-                    _skippedRecords.Add((vendorDeviationMstIdValue.ToString(), $"user_term_id={clauseEventWiseIdValue} not found in user_term"));
+                    migrationLogger.LogSkipped($"user_term_id={clauseEventWiseId.Value} not found", id.ToString());
+                    _skippedRecords.Add((id.ToString(), $"Invalid user_term_id={clauseEventWiseId.Value}"));
                     continue;
                 }
 
-                // Convert ISACCEPT and ISDEVIATE to boolean
-                bool termAccept = false;
-                if (isAccept != DBNull.Value)
+                var record = new SupplierTermRecord
                 {
-                    int acceptValue = Convert.ToInt32(isAccept);
-                    termAccept = acceptValue == 1;
-                }
-
-                bool termDeviate = false;
-                if (isDeviate != DBNull.Value)
-                {
-                    int deviateValue = Convert.ToInt32(isDeviate);
-                    termDeviate = deviateValue == 1;
-                }
-
-                var record = new Dictionary<string, object>
-                {
-                    ["supplier_term_id"] = vendorDeviationMstIdValue,
-                    ["event_id"] = eventId ?? DBNull.Value,
-                    ["supplier_id"] = vendorId ?? DBNull.Value,
-                    ["user_term_id"] = clauseEventWiseId ?? DBNull.Value,
-                    ["term_accept"] = termAccept,
-                    ["term_deviate"] = termDeviate,
-                    ["created_by"] = DBNull.Value,
-                    ["created_date"] = entDate ?? DBNull.Value,
-                    ["modified_by"] = DBNull.Value,
-                    ["modified_date"] = DBNull.Value,
-                    ["is_deleted"] = false,
-                    ["deleted_by"] = DBNull.Value,
-                    ["deleted_date"] = DBNull.Value
+                    SupplierTermId = id,
+                    EventId = eventId,
+                    SupplierId = vendorId,
+                    UserTermId = clauseEventWiseId.Value,
+                    TermAccept = isAccept == 1,
+                    TermDeviate = isDeviate == 1,
+                    CreatedDate = entDate
                 };
 
                 batch.Add(record);
-                processedIds.Add(vendorDeviationMstIdValue);
-                migrationLogger.LogInserted(vendorDeviationMstIdValue.ToString());
+                processedIds.Add(id);
 
                 if (batch.Count >= BATCH_SIZE)
                 {
-                    int batchMigrated = await InsertBatchAsync(batch, pgConn, transaction);
+                    int batchMigrated = await InsertBatchWithCopyAsync(batch, pgConn);
                     migratedRecords += batchMigrated;
                     batch.Clear();
+                    
+                    if (totalRecords % 10000 == 0)
+                    {
+                        var elapsed = stopwatch.Elapsed;
+                        var rate = totalRecords / elapsed.TotalSeconds;
+                        _logger.LogInformation($"Progress: {totalRecords:N0} processed, {migratedRecords:N0} inserted, {rate:F1} records/sec");
+                    }
                 }
             }
 
             // Insert remaining records
             if (batch.Count > 0)
             {
-                int batchMigrated = await InsertBatchAsync(batch, pgConn, transaction);
+                int batchMigrated = await InsertBatchWithCopyAsync(batch, pgConn);
                 migratedRecords += batchMigrated;
             }
 
-            // Log summary
-            var summary = migrationLogger.GetSummary();
-            _logger.LogInformation($"Supplier Terms migration completed. {summary}");
+            stopwatch.Stop();
+            var totalRate = migratedRecords / stopwatch.Elapsed.TotalSeconds;
+            _logger.LogInformation($"Supplier Terms migration completed in {stopwatch.Elapsed:mm\\:ss}. Total: {totalRecords:N0}, Migrated: {migratedRecords:N0}, Skipped: {totalRecords - migratedRecords:N0}, Rate: {totalRate:F1} records/sec");
 
-            // Export migration statistics with skipped record details
+            // Export migration statistics
             MigrationStatsExporter.ExportToExcel(
                 "SupplierTerms_migration_stats.xlsx",
                 totalRecords,
@@ -377,31 +319,58 @@ public class SupplierTermsMigration : MigrationService
         return validIds;
     }
 
-    private async Task<int> InsertBatchAsync(List<Dictionary<string, object>> batch, NpgsqlConnection pgConn, NpgsqlTransaction? transaction)
+    private async Task<int> InsertBatchWithCopyAsync(List<SupplierTermRecord> batch, NpgsqlConnection pgConn)
     {
-        int insertedCount = 0;
+        if (batch.Count == 0) return 0;
 
         try
         {
+            const string copyCommand = @"COPY supplier_terms (
+                supplier_term_id, event_id, supplier_id, user_term_id, term_accept, term_deviate,
+                created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date
+            ) FROM STDIN (FORMAT BINARY)";
+
+            using var writer = await pgConn.BeginBinaryImportAsync(copyCommand);
+
             foreach (var record in batch)
             {
-                using var cmd = new NpgsqlCommand(InsertQuery, pgConn, transaction);
-
-                foreach (var kvp in record)
-                {
-                    cmd.Parameters.AddWithValue($"@{kvp.Key}", kvp.Value ?? DBNull.Value);
-                }
-
-                await cmd.ExecuteNonQueryAsync();
-                insertedCount++;
+                await writer.StartRowAsync();
+                await writer.WriteAsync(record.SupplierTermId, NpgsqlTypes.NpgsqlDbType.Integer);
+                
+                if (record.EventId.HasValue)
+                    await writer.WriteAsync(record.EventId.Value, NpgsqlTypes.NpgsqlDbType.Integer);
+                else
+                    await writer.WriteAsync(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Integer);
+                
+                if (record.SupplierId.HasValue)
+                    await writer.WriteAsync(record.SupplierId.Value, NpgsqlTypes.NpgsqlDbType.Integer);
+                else
+                    await writer.WriteAsync(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Integer);
+                
+                await writer.WriteAsync(record.UserTermId, NpgsqlTypes.NpgsqlDbType.Integer);
+                await writer.WriteAsync(record.TermAccept, NpgsqlTypes.NpgsqlDbType.Boolean);
+                await writer.WriteAsync(record.TermDeviate, NpgsqlTypes.NpgsqlDbType.Boolean);
+                await writer.WriteAsync(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Integer); // created_by
+                
+                if (record.CreatedDate.HasValue)
+                    await writer.WriteAsync(record.CreatedDate.Value, NpgsqlTypes.NpgsqlDbType.Timestamp);
+                else
+                    await writer.WriteAsync(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Timestamp);
+                
+                await writer.WriteAsync(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Integer); // modified_by
+                await writer.WriteAsync(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Timestamp); // modified_date
+                await writer.WriteAsync(false, NpgsqlTypes.NpgsqlDbType.Boolean); // is_deleted
+                await writer.WriteAsync(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Integer); // deleted_by
+                await writer.WriteAsync(DBNull.Value, NpgsqlTypes.NpgsqlDbType.Timestamp); // deleted_date
             }
+
+            await writer.CompleteAsync();
+            return batch.Count;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, $"Error inserting batch of {batch.Count} records");
+            _logger.LogError(ex, $"Error inserting batch of {batch.Count} records with COPY");
             throw;
         }
-
-        return insertedCount;
     }
 }
