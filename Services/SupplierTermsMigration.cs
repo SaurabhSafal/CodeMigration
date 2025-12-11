@@ -121,7 +121,7 @@ public class SupplierTermsMigration : MigrationService
 
     public async Task<int> MigrateAsync()
     {
-        return await base.MigrateAsync(useTransaction: true);
+        return await base.MigrateAsync(useTransaction: false);
     }
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
@@ -257,7 +257,7 @@ public class SupplierTermsMigration : MigrationService
 
                 if (batch.Count >= BATCH_SIZE)
                 {
-                    int batchMigrated = await InsertBatchAsync(batch, pgConn, transaction);
+                    int batchMigrated = await InsertBatchAsync(batch, pgConn);
                     migratedRecords += batchMigrated;
                     batch.Clear();
                 }
@@ -266,7 +266,7 @@ public class SupplierTermsMigration : MigrationService
             // Insert remaining records
             if (batch.Count > 0)
             {
-                int batchMigrated = await InsertBatchAsync(batch, pgConn, transaction);
+                int batchMigrated = await InsertBatchAsync(batch, pgConn);
                 migratedRecords += batchMigrated;
             }
 
@@ -358,7 +358,7 @@ public class SupplierTermsMigration : MigrationService
         return validIds;
     }
 
-    private async Task<int> InsertBatchAsync(List<Dictionary<string, object>> batch, NpgsqlConnection pgConn, NpgsqlTransaction? transaction)
+    private async Task<int> InsertBatchAsync(List<Dictionary<string, object>> batch, NpgsqlConnection pgConn)
     {
         if (batch == null || batch.Count == 0)
             return 0;

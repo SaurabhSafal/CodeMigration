@@ -1,0 +1,44 @@
+Building...
+/home/saurabh/Navikaran/CodeMigration/SeedData/Models/CompanyMaster.cs(93,18): warning CS8669: The annotation for nullable reference types should only be used in code within a '#nullable' annotations context. Auto-generated code requires an explicit '#nullable' directive in source. [/home/saurabh/Navikaran/CodeMigration/DataMigration.csproj]
+/home/saurabh/Navikaran/CodeMigration/SeedData/Models/CompanyMaster.cs(96,18): warning CS8669: The annotation for nullable reference types should only be used in code within a '#nullable' annotations context. Auto-generated code requires an explicit '#nullable' directive in source. [/home/saurabh/Navikaran/CodeMigration/DataMigration.csproj]
+/home/saurabh/Navikaran/CodeMigration/LogSummarizerProgram.cs(16,21): warning CS7022: The entry point of the program is global code; ignoring 'LogSummarizerProgram.Main(string[])' entry point. [/home/saurabh/Navikaran/CodeMigration/DataMigration.csproj]
+/home/saurabh/Navikaran/CodeMigration/SeedData/Models/PermissionsTemplate.cs(26,40): warning CS8618: Non-nullable property 'PermissionGroup' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/home/saurabh/Navikaran/CodeMigration/DataMigration.csproj]
+/home/saurabh/Navikaran/CodeMigration/SeedData/Models/PermissionsTemplate.cs(29,35): warning CS8618: Non-nullable property 'Permission' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/home/saurabh/Navikaran/CodeMigration/DataMigration.csproj]
+/home/saurabh/Navikaran/CodeMigration/SeedData/Models/PermissionsTemplate.cs(32,29): warning CS8618: Non-nullable property 'Role' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/home/saurabh/Navikaran/CodeMigration/DataMigration.csproj]
+/home/saurabh/Navikaran/CodeMigration/SeedData/Models/CountryMaster.cs(14,19): warning CS8618: Non-nullable property 'CountryName' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/home/saurabh/Navikaran/CodeMigration/DataMigration.csproj]
+/home/saurabh/Navikaran/CodeMigration/SeedData/Models/CountryMaster.cs(17,19): warning CS8618: Non-nullable property 'CountryCode' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/home/saurabh/Navikaran/CodeMigration/DataMigration.csproj]
+/home/saurabh/Navikaran/CodeMigration/Services/CompanyMasterMigration.cs(100,12): warning CS8618: Non-nullable field '_logger' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the field as nullable. [/home/saurabh/Navikaran/CodeMigration/DataMigration.csproj]
+/home/saurabh/Navikaran/CodeMigration/Services/EventSettingMigrationService.cs(100,116): warning CS8604: Possible null reference argument for parameter 'value' in 'void Dictionary<string, object>.Add(string key, object value)'. [/home/saurabh/Navikaran/CodeMigration/DataMigration.csproj]
+/home/saurabh/Navikaran/CodeMigration/Services/AuctionMinMaxTargetPriceMigration.cs(142,50): warning CS8604: Possible null reference argument for parameter 'value' in 'void Dictionary<string, object>.Add(string key, object value)'. [/home/saurabh/Navikaran/CodeMigration/DataMigration.csproj]
+info: DataMigration.Services.BinaryAttachmentBackgroundService[0]
+      BinaryAttachmentBackgroundService started
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://localhost:5290
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/saurabh/Navikaran/CodeMigration
+warn: Microsoft.AspNetCore.HttpsPolicy.HttpsRedirectionMiddleware[3]
+      Failed to determine the https port for redirect.
+info: NfaHeaderMigration[0]
+      [nfa_header] Starting migration
+info: NfaHeaderMigration[0]
+      Starting NFA Header migration...
+info: NfaHeaderMigration[0]
+      Loaded 1744 valid currency IDs. Default currency_id: 37497
+info: NfaHeaderMigration[0]
+      Loaded 61909 valid supplier IDs
+info: NfaHeaderMigration[0]
+      Loaded lookup data: PaymentTerms=2181, Incoterms=85, PODocTypes=665, Suppliers=61909
+warn: NfaHeaderMigration[0]
+      Skipping record 127 - ClientSAPId is NULL or 0
+warn: NfaHeaderMigration[0]
+      Skipping record 143 - VendorId is NULL or 0
+warn: NfaHeaderMigration[0]
+      Skipping record 182 - VendorId is NULL or 0
+warn: NfaHeaderMigration[0]
+      Skipping record 778 - VendorId is NULL or 0
+warn: NfaHeaderMigration[0]
+      Skipping record 784 - VendorId is NULL or 0

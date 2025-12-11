@@ -368,58 +368,64 @@ public class NfaLotChargesMigration : MigrationService
 
     private async Task<int> InsertBatchWithTransactionAsync(List<Dictionary<string, object>> batch, NpgsqlConnection pgConn, NpgsqlTransaction? parentTransaction = null)
     {
+        if (batch == null || batch.Count == 0)
+            return 0;
+
         int insertedCount = 0;
-
-        // Use parent transaction if provided, otherwise create a new one
-        NpgsqlTransaction? transaction = parentTransaction;
-        bool ownTransaction = false;
-        
-        if (transaction == null)
-        {
-            transaction = await pgConn.BeginTransactionAsync();
-            ownTransaction = true;
-        }
-
         try
         {
-            foreach (var record in batch)
+            using (var importer = pgConn.BeginBinaryImport(@"COPY nfa_lot_charges (
+                nfa_lot_charges_id,
+                nfa_header_id,
+                user_price_bid_lot_charges_id,
+                price_bid_charges_id,
+                percentage,
+                basic_lot_charges_amount,
+                charges_name,
+                tax_percentage,
+                tax_amount,
+                tax_master_id,
+                total_lot_charges_amount,
+                created_by,
+                created_date,
+                modified_by,
+                modified_date,
+                is_deleted,
+                deleted_by,
+                deleted_date
+            ) FROM STDIN (FORMAT BINARY)"))
             {
-                using var cmd = new NpgsqlCommand(InsertQuery, pgConn, transaction);
-
-                foreach (var kvp in record)
+                foreach (var record in batch)
                 {
-                    cmd.Parameters.AddWithValue($"@{kvp.Key}", kvp.Value);
+                    await importer.StartRowAsync();
+                    importer.Write(record["nfa_lot_charges_id"], NpgsqlTypes.NpgsqlDbType.Integer);
+                    importer.Write(record["nfa_header_id"], NpgsqlTypes.NpgsqlDbType.Integer);
+                    importer.Write(record["user_price_bid_lot_charges_id"] == DBNull.Value ? null : record["user_price_bid_lot_charges_id"], NpgsqlTypes.NpgsqlDbType.Integer);
+                    importer.Write(record["price_bid_charges_id"] == DBNull.Value ? null : record["price_bid_charges_id"], NpgsqlTypes.NpgsqlDbType.Integer);
+                    importer.Write(record["percentage"] == DBNull.Value ? null : record["percentage"], NpgsqlTypes.NpgsqlDbType.Numeric);
+                    importer.Write(record["basic_lot_charges_amount"] == DBNull.Value ? null : record["basic_lot_charges_amount"], NpgsqlTypes.NpgsqlDbType.Numeric);
+                    importer.Write(record["charges_name"] == DBNull.Value ? null : record["charges_name"], NpgsqlTypes.NpgsqlDbType.Text);
+                    importer.Write(record["tax_percentage"] == DBNull.Value ? null : record["tax_percentage"], NpgsqlTypes.NpgsqlDbType.Numeric);
+                    importer.Write(record["tax_amount"] == DBNull.Value ? null : record["tax_amount"], NpgsqlTypes.NpgsqlDbType.Numeric);
+                    importer.Write(record["tax_master_id"] == DBNull.Value ? null : record["tax_master_id"], NpgsqlTypes.NpgsqlDbType.Integer);
+                    importer.Write(record["total_lot_charges_amount"] == DBNull.Value ? null : record["total_lot_charges_amount"], NpgsqlTypes.NpgsqlDbType.Numeric);
+                    importer.Write(record["created_by"] == DBNull.Value ? null : record["created_by"], NpgsqlTypes.NpgsqlDbType.Integer);
+                    importer.Write(record["created_date"] == DBNull.Value ? null : record["created_date"], NpgsqlTypes.NpgsqlDbType.Timestamp);
+                    importer.Write(record["modified_by"] == DBNull.Value ? null : record["modified_by"], NpgsqlTypes.NpgsqlDbType.Integer);
+                    importer.Write(record["modified_date"] == DBNull.Value ? null : record["modified_date"], NpgsqlTypes.NpgsqlDbType.Timestamp);
+                    importer.Write(record["is_deleted"], NpgsqlTypes.NpgsqlDbType.Boolean);
+                    importer.Write(record["deleted_by"] == DBNull.Value ? null : record["deleted_by"], NpgsqlTypes.NpgsqlDbType.Integer);
+                    importer.Write(record["deleted_date"] == DBNull.Value ? null : record["deleted_date"], NpgsqlTypes.NpgsqlDbType.Timestamp);
+                    insertedCount++;
                 }
-
-                await cmd.ExecuteNonQueryAsync();
-                insertedCount++;
+                await importer.CompleteAsync();
             }
-
-            // Only commit if we created our own transaction
-            if (ownTransaction)
-            {
-                await transaction.CommitAsync();
-            }
-
-            return insertedCount;
         }
         catch (Exception ex)
         {
-            // Only rollback if we created our own transaction
-            if (ownTransaction && transaction != null)
-            {
-                await transaction.RollbackAsync();
-            }
-            _logger.LogError(ex, $"Error inserting batch of {batch.Count} records");
-            throw;
+            _logger.LogError(ex, $"Error during bulk COPY of {batch.Count} records.");
+            // Don't throw - continue with next batch
         }
-        finally
-        {
-            // Only dispose if we created our own transaction
-            if (ownTransaction && transaction != null)
-            {
-                await transaction.DisposeAsync();
-            }
-        }
+        return insertedCount;
     }
 }
