@@ -209,6 +209,7 @@ public class WorkflowAmountHistoryMigration : MigrationService
         int insertedCount = 0;
         int processedCount = 0;
         int skippedCount = 0;
+        var skippedRecordsList = new List<(string RecordId, string Reason)>();
         
         try
         {
@@ -236,44 +237,48 @@ public class WorkflowAmountHistoryMigration : MigrationService
                     // Validate required fields
                     if (workFlowSubHistoryId <= 0)
                     {
-                        Console.WriteLine($"Skipping record {processedCount}: Invalid WorkFlowSubHistoryId ({workFlowSubHistoryId})");
+                        string reason = $"Invalid WorkFlowSubHistoryId ({workFlowSubHistoryId})";
+                        Console.WriteLine($"Skipping record {processedCount}: {reason}");
                         skippedCount++;
+                        skippedRecordsList.Add((workFlowSubHistoryId.ToString(), reason));
                         continue;
                     }
-                    
                     if (workFlowSubId <= 0)
                     {
-                        Console.WriteLine($"Skipping record {processedCount}: Invalid WorkFlowSubId ({workFlowSubId})");
+                        string reason = $"Invalid WorkFlowSubId ({workFlowSubId})";
+                        Console.WriteLine($"Skipping record {processedCount}: {reason}");
                         skippedCount++;
+                        skippedRecordsList.Add((workFlowSubHistoryId.ToString(), reason));
                         continue;
                     }
-                    
                     if (workFlowMainId <= 0)
                     {
-                        Console.WriteLine($"Skipping record {processedCount}: Invalid WorkFlowMainId ({workFlowMainId})");
+                        string reason = $"Invalid WorkFlowMainId ({workFlowMainId})";
+                        Console.WriteLine($"Skipping record {processedCount}: {reason}");
                         skippedCount++;
+                        skippedRecordsList.Add((workFlowSubHistoryId.ToString(), reason));
                         continue;
                     }
-
                     // Validate numeric field constraints for PostgreSQL (precision 18, scale 6)
                     // Maximum value is 10^12 - 1 = 999,999,999,999.999999
                     const decimal maxValue = 999999999999.999999m;
                     const decimal minValue = -999999999999.999999m;
-                    
                     if (fromAmount > maxValue || fromAmount < minValue)
                     {
-                        Console.WriteLine($"Skipping record {processedCount}: FromAmount ({fromAmount}) exceeds PostgreSQL numeric field limits");
+                        string reason = $"FromAmount ({fromAmount}) exceeds PostgreSQL numeric field limits";
+                        Console.WriteLine($"Skipping record {processedCount}: {reason}");
                         skippedCount++;
+                        skippedRecordsList.Add((workFlowSubHistoryId.ToString(), reason));
                         continue;
                     }
-                    
                     if (toAmount > maxValue || toAmount < minValue)
                     {
-                        Console.WriteLine($"Skipping record {processedCount}: ToAmount ({toAmount}) exceeds PostgreSQL numeric field limits");
+                        string reason = $"ToAmount ({toAmount}) exceeds PostgreSQL numeric field limits";
+                        Console.WriteLine($"Skipping record {processedCount}: {reason}");
                         skippedCount++;
+                        skippedRecordsList.Add((workFlowSubHistoryId.ToString(), reason));
                         continue;
                     }
-
                     // Check if workflow_master_id exists in workflow_master table
                     using var checkMasterCmd = new NpgsqlCommand("SELECT 1 FROM workflow_master WHERE workflow_id = @workflow_id LIMIT 1", pgConn);
                     if (transaction != null)
@@ -281,15 +286,15 @@ public class WorkflowAmountHistoryMigration : MigrationService
                         checkMasterCmd.Transaction = transaction;
                     }
                     checkMasterCmd.Parameters.AddWithValue("@workflow_id", workFlowMainId);
-                    
                     var masterExists = await checkMasterCmd.ExecuteScalarAsync();
                     if (masterExists == null)
                     {
-                        Console.WriteLine($"Skipping record {processedCount}: WorkFlowMainId ({workFlowMainId}) not found in workflow_master table");
+                        string reason = $"WorkFlowMainId ({workFlowMainId}) not found in workflow_master table";
+                        Console.WriteLine($"Skipping record {processedCount}: {reason}");
                         skippedCount++;
+                        skippedRecordsList.Add((workFlowSubHistoryId.ToString(), reason));
                         continue;
                     }
-
                     // Check if workflow_amount_id exists in workflow_amount table
                     using var checkAmountCmd = new NpgsqlCommand("SELECT 1 FROM workflow_amount WHERE workflow_amount_id = @workflow_amount_id LIMIT 1", pgConn);
                     if (transaction != null)
@@ -297,12 +302,13 @@ public class WorkflowAmountHistoryMigration : MigrationService
                         checkAmountCmd.Transaction = transaction;
                     }
                     checkAmountCmd.Parameters.AddWithValue("@workflow_amount_id", workFlowSubId);
-                    
                     var amountExists = await checkAmountCmd.ExecuteScalarAsync();
                     if (amountExists == null)
                     {
-                        Console.WriteLine($"Skipping record {processedCount}: WorkFlowSubId ({workFlowSubId}) not found in workflow_amount table");
+                        string reason = $"WorkFlowSubId ({workFlowSubId}) not found in workflow_amount table";
+                        Console.WriteLine($"Skipping record {processedCount}: {reason}");
                         skippedCount++;
+                        skippedRecordsList.Add((workFlowSubHistoryId.ToString(), reason));
                         continue;
                     }
 
@@ -325,17 +331,17 @@ public class WorkflowAmountHistoryMigration : MigrationService
                 }
                 catch (Exception ex)
                 {
+                    string recordId = reader.IsDBNull(reader.GetOrdinal("WorkFlowSubHistoryId")) ? "NULL" : reader["WorkFlowSubHistoryId"].ToString();
+                    string reason = $"Exception: {ex.Message}";
+                    skippedCount++;
+                    skippedRecordsList.Add((recordId, reason));
                     Console.WriteLine($"Error processing record {processedCount}: {ex.Message}");
-                    Console.WriteLine($"Record details - WorkFlowSubHistoryId: {(reader.IsDBNull(reader.GetOrdinal("WorkFlowSubHistoryId")) ? "NULL" : reader["WorkFlowSubHistoryId"].ToString())}");
-                    
-                    // If using transaction, any error aborts the transaction
+                    Console.WriteLine($"Record details - WorkFlowSubHistoryId: {recordId}");
                     if (transaction != null)
                     {
                         Console.WriteLine("Error occurred in transaction context. Rolling back and stopping migration.");
-                        throw; // Re-throw to trigger rollback in the base class
+                        throw;
                     }
-                    // For non-transactional operations, continue with next record
-                    skippedCount++;
                 }
             }
         }
@@ -346,6 +352,17 @@ public class WorkflowAmountHistoryMigration : MigrationService
         }
 
         Console.WriteLine($"WorkflowAmountHistory Migration completed. Processed: {processedCount}, Inserted: {insertedCount}, Skipped: {skippedCount}");
+        // Export migration statistics to Excel
+        string outputPath = System.IO.Path.Combine("migration_outputs", $"WorkflowAmountHistoryMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx");
+        MigrationStatsExporter.ExportToExcel(
+            outputPath,
+            processedCount,
+            insertedCount,
+            skippedCount,
+            _logger,
+            skippedRecordsList
+        );
+        Console.WriteLine($"Migration statistics exported to {outputPath}");
         return insertedCount;
     }
 }

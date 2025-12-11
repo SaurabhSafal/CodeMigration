@@ -94,7 +94,7 @@ public class POConditionMasterMigration : MigrationService
 
         int insertedCount = 0;
         int processedCount = 0;
-        
+        var skippedRecords = new List<(string RecordId, string Reason)>();
         try
         {
             while (await reader.ReadAsync())
@@ -112,31 +112,26 @@ public class POConditionMasterMigration : MigrationService
                     // Validate required fields
                     if (reader.IsDBNull(reader.GetOrdinal("ClientSAPId")) || clientSAPId == 0)
                     {
-                        _migrationLogger.LogSkipped(
-                            "ClientSAPId is null or zero", 
-                            $"POConditionTypeId={poConditionTypeId}",
-                            new Dictionary<string, object> { { "ProcessedCount", processedCount }, { "POConditionTypeId", poConditionTypeId } }
-                        );
+                        var reason = "ClientSAPId is null or zero";
+                        var recId = $"POConditionTypeId={poConditionTypeId}";
+                        _migrationLogger.LogSkipped(reason, recId, new Dictionary<string, object> { { "ProcessedCount", processedCount }, { "POConditionTypeId", poConditionTypeId } });
+                        skippedRecords.Add((recId, reason));
                         continue;
                     }
-
                     if (string.IsNullOrWhiteSpace(poConditionTypeCode))
                     {
-                        _migrationLogger.LogSkipped(
-                            "POConditionTypeCode is null or empty", 
-                            $"POConditionTypeId={poConditionTypeId}",
-                            new Dictionary<string, object> { { "ProcessedCount", processedCount }, { "POConditionTypeId", poConditionTypeId } }
-                        );
+                        var reason = "POConditionTypeCode is null or empty";
+                        var recId = $"POConditionTypeId={poConditionTypeId}";
+                        _migrationLogger.LogSkipped(reason, recId, new Dictionary<string, object> { { "ProcessedCount", processedCount }, { "POConditionTypeId", poConditionTypeId } });
+                        skippedRecords.Add((recId, reason));
                         continue;
                     }
-
                     if (string.IsNullOrWhiteSpace(poConditionTypeDesc))
                     {
-                        _migrationLogger.LogSkipped(
-                            "POConditionTypeDesc is null or empty", 
-                            $"POConditionTypeId={poConditionTypeId}",
-                            new Dictionary<string, object> { { "ProcessedCount", processedCount }, { "POConditionTypeId", poConditionTypeId } }
-                        );
+                        var reason = "POConditionTypeDesc is null or empty";
+                        var recId = $"POConditionTypeId={poConditionTypeId}";
+                        _migrationLogger.LogSkipped(reason, recId, new Dictionary<string, object> { { "ProcessedCount", processedCount }, { "POConditionTypeId", poConditionTypeId } });
+                        skippedRecords.Add((recId, reason));
                         continue;
                     }
 
@@ -169,65 +164,61 @@ public class POConditionMasterMigration : MigrationService
                         insertedCount++;
                         _migrationLogger.LogInserted($"POConditionTypeId={poConditionTypeId}");
                     }
+                    else
+                    {
+                        var reason = "Insert returned 0 rows";
+                        var recId = $"POConditionTypeId={poConditionTypeId}";
+                        skippedRecords.Add((recId, reason));
+                        _migrationLogger.LogSkipped(reason, recId, new Dictionary<string, object> { { "ProcessedCount", processedCount }, { "POConditionTypeId", poConditionTypeId } });
+                    }
                 }
-                catch (Exception recordEx)
+                catch (Exception rowEx)
                 {
-                    _migrationLogger.LogError(
-                        $"Error processing record: {recordEx.Message}", 
-                        $"ProcessedCount={processedCount}",
-                        recordEx
-                    );
-                    throw new Exception($"Error processing record {processedCount} in PO Condition Master Migration: {recordEx.Message}", recordEx);
+                    var errorId = $"POConditionTypeId={reader["POConditionTypeId"]}";
+                    _migrationLogger.LogError($"Error processing record: {rowEx.Message}", errorId, rowEx);
+                    skippedRecords.Add((errorId, rowEx.Message));
                 }
             }
         }
         catch (Exception readerEx)
         {
-            // Check if it's a connection or stream issue
-            if (readerEx.Message.Contains("reading from stream") || readerEx.Message.Contains("connection") || readerEx.Message.Contains("timeout"))
-            {
-                throw new Exception($"SQL Server connection issue during PO Condition Master Migration after processing {processedCount} records. " +
-                                  $"This could be due to: 1) Network connectivity issues, 2) SQL Server timeout, 3) Large dataset causing memory issues, " +
-                                  $"4) Connection string issues. Original error: {readerEx.Message}", readerEx);
-            }
-            else if (readerEx.Message.Contains("constraint") || readerEx.Message.Contains("foreign key") || readerEx.Message.Contains("violates"))
-            {
-                throw new Exception($"Database constraint violation during PO Condition Master Migration at record {processedCount}. " +
-                                  $"This could be due to: 1) Duplicate primary keys, " +
-                                  $"2) Invalid foreign key references, 3) Invalid data values. Original error: {readerEx.Message}", readerEx);
-            }
-            else
-            {
-                throw new Exception($"Unexpected error during PO Condition Master Migration at record {processedCount}: {readerEx.Message}", readerEx);
-            }
+            _migrationLogger.LogError($"Error reading data from source: {readerEx.Message}", null, readerEx);
+            throw;
         }
-        
-        _migrationLogger.LogInfo($"Migration completed: Processed={processedCount}, Inserted={insertedCount}, Skipped={processedCount - insertedCount}");
+        _migrationLogger.LogInfo($"Migration completed: Processed={processedCount}, Inserted={insertedCount}, Skipped={skippedRecords.Count}");
+
+        // Export migration stats to Excel
+        string outputPath = "po_condition_master_migration_stats.xlsx";
+        MigrationStatsExporter.ExportToExcel(
+            outputPath,
+            processedCount,
+            insertedCount,
+            skippedRecords.Count,
+            _logger,
+            skippedRecords
+        );
+        _logger.LogInformation($"Migration stats exported to migration_outputs/{outputPath}");
+
         return insertedCount;
     }
 
     private async Task<Dictionary<string, int>> LoadPoDocTypeMappingAsync(SqlConnection sqlConn)
     {
         var mapping = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        try
+
+        using var sqlCmd = new SqlCommand("SELECT PODocTypeId, PODocTypeCode FROM TBL_PO_DOC_TYPE", sqlConn);
+        using var reader = await sqlCmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
         {
-            var query = "SELECT PODocTypeId, PODocTypeCode FROM TBL_PO_DOC_TYPE WHERE PODocTypeCode IS NOT NULL";
-            using var cmd = new SqlCommand(query, sqlConn);
-            using var reader = await cmd.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
+            var poDocTypeId = reader.GetInt32(0);
+            var poDocTypeCode = reader.GetString(1);
+
+            if (!mapping.ContainsKey(poDocTypeCode))
             {
-                int poDocTypeId = reader.GetInt32(0);
-                string poDocTypeCode = reader.GetString(1).Trim();
-                if (!mapping.ContainsKey(poDocTypeCode))
-                {
-                    mapping[poDocTypeCode] = poDocTypeId;
-                }
+                mapping.Add(poDocTypeCode, poDocTypeId);
             }
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Warning: Error loading PODocType mapping: {ex.Message}");
-        }
+
         return mapping;
     }
 }

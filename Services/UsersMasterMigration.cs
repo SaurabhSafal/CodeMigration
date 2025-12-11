@@ -384,6 +384,7 @@ public class UsersMasterMigration : MigrationService
         int processedCount = 0;
         int skippedCount = 0;
         int errorCount = 0;
+        var skippedRecordsList = new ConcurrentBag<(string RecordId, string Reason)>();
 
         // Heuristic for worker count
         int transformWorkerCount = Math.Max(1, _transformWorkerCount);
@@ -587,18 +588,21 @@ public class UsersMasterMigration : MigrationService
                                 {
                                     Interlocked.Increment(ref skippedCount);
                                     Console.WriteLine($"Validation failed for user PersonId={raw.PersonId}, UserId={raw.UserId ?? "null"}: {validationError}");
+                                    skippedRecordsList.Add((raw.UserId ?? "0", validationError));
                                 }
                             }
                             else
                             {
                                 Interlocked.Increment(ref skippedCount);
                                 Console.WriteLine($"Skipped user: PersonId={raw.PersonId}, UserId={raw.UserId ?? "null"}");
+                                skippedRecordsList.Add((raw.UserId ?? "0", "Transform error"));
                             }
                         }
                         catch (Exception ex)
                         {
                             Interlocked.Increment(ref errorCount);
                             var errorMsg = $"Error transforming user PersonId={raw?.PersonId ?? -1}, UserId={raw?.UserId ?? "null"}: {ex.Message}";
+                            skippedRecordsList.Add((raw?.UserId ?? "0", $"Transform exception: {ex.Message}"));
                             Console.WriteLine(errorMsg);
                             progress.ReportError(errorMsg, Interlocked.CompareExchange(ref processedCount, 0, 0));
                         }
@@ -706,6 +710,21 @@ public class UsersMasterMigration : MigrationService
             progress.ReportProgress(processedCount, totalRecords, "Inserting user roles...", stopwatch.Elapsed);
             int rolesInserted = await InsertUserRolesAsync(pgConn, userRolesList, transaction);
             progress.ReportProgress(processedCount, totalRecords, $"User roles inserted: {rolesInserted}", stopwatch.Elapsed);
+
+            // Export migration statistics to Excel
+            progress.ReportProgress(processedCount, totalRecords, "Exporting migration statistics...", stopwatch.Elapsed);
+            string outputPath = System.IO.Path.Combine("migration_outputs", $"UsersMasterMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx");
+            var skippedRecordsForExport = skippedRecordsList.ToList();
+            MigrationStatsExporter.ExportToExcel(
+                outputPath,
+                processedCount,
+                insertedCount,
+                skippedCount + errorCount,
+                _logger,
+                skippedRecordsForExport
+            );
+            _logger.LogInformation($"Migration statistics exported to {outputPath}");
+            progress.ReportProgress(processedCount, totalRecords, $"Statistics exported to {outputPath}", stopwatch.Elapsed);
         }
         catch (Exception ex)
         {

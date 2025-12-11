@@ -169,30 +169,36 @@ INSERT INTO pr_boq_items (
         int skippedCount = 0;
         int batchNumber = 0;
         var batch = new List<Dictionary<string, object>>();
+        var skippedRecords = new List<(string RecordId, string Reason)>();
+        int totalRecords = 0;
 
         using var selectCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await selectCmd.ExecuteReaderAsync();
 
         while (await reader.ReadAsync())
         {
+            totalRecords++;
             // Validate ERP PR Lines ID (using PRTRANSID which maps to erp_pr_lines_id)
             var erpPrLinesIdValue = reader["PRTRANSID"];
             if (erpPrLinesIdValue != DBNull.Value)
             {
                 int erpPrLinesId = Convert.ToInt32(erpPrLinesIdValue);
-                
                 // Skip if ERP PR Lines ID not present in erp_pr_lines
                 if (!validErpPrLinesIds.Contains(erpPrLinesId))
                 {
-                    _logger.LogWarning($"Skipping ItemId {reader["ItemId"]}: ERP PR Lines ID {erpPrLinesId} not found in erp_pr_lines.");
+                    var reason = $"ERP PR Lines ID {erpPrLinesId} not found in erp_pr_lines.";
+                    _logger.LogWarning($"Skipping ItemId {reader["ItemId"]}: {reason}");
                     skippedCount++;
+                    skippedRecords.Add(($"ItemId={reader["ItemId"]}", reason));
                     continue;
                 }
             }
             else
             {
-                _logger.LogWarning($"Skipping ItemId {reader["ItemId"]}: ERP PR Lines ID is NULL.");
+                var reason = "ERP PR Lines ID is NULL.";
+                _logger.LogWarning($"Skipping ItemId {reader["ItemId"]}: {reason}");
                 skippedCount++;
+                skippedRecords.Add(($"ItemId={reader["ItemId"]}", reason));
                 continue;
             }
             
@@ -231,7 +237,6 @@ INSERT INTO pr_boq_items (
             };
 
             batch.Add(record);
-
             if (batch.Count >= BATCH_SIZE)
             {
                 batchNumber++;
@@ -241,7 +246,6 @@ INSERT INTO pr_boq_items (
                 batch.Clear();
             }
         }
-
         if (batch.Count > 0)
         {
             batchNumber++;
@@ -249,8 +253,18 @@ INSERT INTO pr_boq_items (
             insertedCount += await InsertBatchAsync(pgConn, batch, transaction, batchNumber);
             _logger.LogInformation($"Completed batch {batchNumber}. Total records inserted so far: {insertedCount}");
         }
-
         _logger.LogInformation($"Migration finished. Total records inserted: {insertedCount}, Skipped: {skippedCount}");
+        // Export migration stats to Excel
+        string outputPath = "pr_boq_items_migration_stats.xlsx";
+        MigrationStatsExporter.ExportToExcel(
+            outputPath,
+            totalRecords,
+            insertedCount,
+            skippedCount,
+            _logger,
+            skippedRecords
+        );
+        _logger.LogInformation($"Migration stats exported to migration_outputs/{outputPath}");
         return insertedCount;
     }
 

@@ -53,6 +53,7 @@ namespace DataMigration.Services
 
             var migratedRecords = 0;
             var skippedRecords = 0;
+            var skippedDetails = new List<(string, string)>(); // (record id, reason)
 
             try
             {
@@ -135,38 +136,48 @@ namespace DataMigration.Services
                         // Validate event_id (REQUIRED - NOT NULL constraint)
                         if (!record.EVENTID.HasValue)
                         {
-                            _logger.LogWarning($"Skipping PBLotID {record.PBLotID}: EVENTID is null");
+                            var reason = "EVENTID is null";
+                            _logger.LogWarning($"Skipping PBLotID {record.PBLotID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"{record.PBLotID}", reason));
                             continue;
                         }
 
                         if (!validEventIds.Contains(record.EVENTID.Value))
                         {
-                            _logger.LogWarning($"Skipping PBLotID {record.PBLotID}: event_id={record.EVENTID} not found in event_master");
+                            var reason = $"event_id={record.EVENTID} not found in event_master";
+                            _logger.LogWarning($"Skipping PBLotID {record.PBLotID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"{record.PBLotID}", reason));
                             continue;
                         }
 
                         // Validate supplier_id (REQUIRED - NOT NULL constraint)
                         if (!record.VendorId.HasValue)
                         {
-                            _logger.LogWarning($"Skipping PBLotID {record.PBLotID}: VendorId is null");
+                            var reason = "VendorId is null";
+                            _logger.LogWarning($"Skipping PBLotID {record.PBLotID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"{record.PBLotID}", reason));
                             continue;
                         }
 
                         if (!validSupplierIds.Contains(record.VendorId.Value))
                         {
-                            _logger.LogWarning($"Skipping PBLotID {record.PBLotID}: supplier_id={record.VendorId} not found in supplier_master");
+                            var reason = $"supplier_id={record.VendorId} not found in supplier_master";
+                            _logger.LogWarning($"Skipping PBLotID {record.PBLotID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"{record.PBLotID}", reason));
                             continue;
                         }
 
                         // Validate supplier_price_bid_lot_price (REQUIRED - NOT NULL constraint)
                         if (!record.TOTAL.HasValue)
                         {
-                            _logger.LogWarning($"Skipping PBLotID {record.PBLotID}: TOTAL is null");
+                            var reason = "TOTAL is null";
+                            _logger.LogWarning($"Skipping PBLotID {record.PBLotID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"{record.PBLotID}", reason));
                             continue;
                         }
 
@@ -196,8 +207,10 @@ namespace DataMigration.Services
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError($"PBLotID {record.PBLotID}: {ex.Message}");
+                        var reason = ex.Message;
+                        _logger.LogError($"PBLotID {record.PBLotID}: {reason}");
                         skippedRecords++;
+                        skippedDetails.Add(($"{record.PBLotID}", reason));
                     }
                 }
 
@@ -208,6 +221,17 @@ namespace DataMigration.Services
                 }
 
                 _logger.LogInformation($"Migration completed. Migrated: {migratedRecords}, Skipped: {skippedRecords}");
+
+                // Export migration stats to Excel
+                var totalRecords = migratedRecords + skippedRecords;
+                MigrationStatsExporter.ExportToExcel(
+                    "migration_outputs/SupplierPriceBidLotPriceMigration_Stats.xlsx",
+                    totalRecords,
+                    migratedRecords,
+                    skippedRecords,
+                    _logger,
+                    skippedDetails
+                );
             }
             catch (Exception ex)
             {
@@ -290,6 +314,7 @@ namespace DataMigration.Services
 
             var upsertedRecords = 0;
             var skippedRecords = 0;
+            var skippedDetails = new List<(string, string)>();
 
             try
             {
@@ -378,38 +403,48 @@ namespace DataMigration.Services
                         // Validate event_id
                         if (!record.EVENTID.HasValue)
                         {
-                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: EVENTID is null");
+                            var reason = "EVENTID is null";
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"{record.UPDATEID}", reason));
                             continue;
                         }
 
                         if (!validEventIds.Contains(record.EVENTID.Value))
                         {
-                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: event_id={record.EVENTID} not found in event_master");
+                            var reason = $"event_id={record.EVENTID} not found in event_master";
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"{record.UPDATEID}", reason));
                             continue;
                         }
 
                         // Validate supplier_id
                         if (!record.VendorId.HasValue)
                         {
-                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: VendorId is null");
+                            var reason = "VendorId is null";
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"{record.UPDATEID}", reason));
                             continue;
                         }
 
                         if (!validSupplierIds.Contains(record.VendorId.Value))
                         {
-                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: supplier_id={record.VendorId} not found in supplier_master");
+                            var reason = $"supplier_id={record.VendorId} not found in supplier_master";
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"{record.UPDATEID}", reason));
                             continue;
                         }
 
                         // Validate TOTAL
                         if (!record.TOTAL.HasValue)
                         {
-                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: TOTAL is null");
+                            var reason = "TOTAL is null";
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"{record.UPDATEID}", reason));
                             continue;
                         }
 
@@ -464,12 +499,25 @@ namespace DataMigration.Services
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError($"UPDATEID {record.UPDATEID} (Event: {record.EVENTID}, Vendor: {record.VendorId}): {ex.Message}");
+                        var reason = ex.Message;
+                        _logger.LogError($"UPDATEID {record.UPDATEID} (Event: {record.EVENTID}, Vendor: {record.VendorId}): {reason}");
                         skippedRecords++;
+                        skippedDetails.Add(($"{record.UPDATEID}", reason));
                     }
                 }
 
                 _logger.LogInformation($"UPSERT completed. Upserted: {upsertedRecords}, Skipped: {skippedRecords}");
+
+                // Export migration stats to Excel
+                var totalRecords = upsertedRecords + skippedRecords;
+                MigrationStatsExporter.ExportToExcel(
+                    "migration_outputs/SupplierPriceBidLotPriceUpsert_Stats.xlsx",
+                    totalRecords,
+                    upsertedRecords,
+                    skippedRecords,
+                    _logger,
+                    skippedDetails
+                );
             }
             catch (Exception ex)
             {

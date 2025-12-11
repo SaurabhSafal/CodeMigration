@@ -98,16 +98,14 @@ public class PurchaseOrganizationMasterMigration : MigrationService
             {
                 Console.WriteLine($"✓ Found records! Processing...");
             }
-            
             if (totalReadCount % 10 == 0)
             {
                 Console.WriteLine($"📊 Processed {totalReadCount} records so far... (Inserted: {insertedCount}, Skipped: {skippedCount})");
             }
-            
+            var recordId = reader["PurchaseOrgId"]?.ToString() ?? "Unknown";
             try
             {
                 pgCmd.Parameters.Clear();
-
                 pgCmd.Parameters.AddWithValue("@purchase_organization_id", reader["PurchaseOrgId"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@purchase_organization_code", reader["PurchaseOrgCode"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@purchase_organization_currency_name", reader["PurchaseOrgDesc"] ?? DBNull.Value);
@@ -119,14 +117,23 @@ public class PurchaseOrganizationMasterMigration : MigrationService
                 pgCmd.Parameters.AddWithValue("@is_deleted", false);
                 pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value);
-
                 int result = await pgCmd.ExecuteNonQueryAsync();
-                if (result > 0) insertedCount++;
+                if (result > 0)
+                {
+                    insertedCount++;
+                    _migrationLogger?.LogInserted(recordId);
+                }
+                else
+                {
+                    skippedCount++;
+                    _migrationLogger?.LogSkipped("Insert returned 0 rows", recordId);
+                }
             }
             catch (Exception ex)
             {
                 skippedCount++;
-                Console.WriteLine($"❌ Error migrating PurchaseOrgId {reader["PurchaseOrgId"]}: {ex.Message}");
+                _migrationLogger?.LogSkipped(ex.Message, recordId);
+                Console.WriteLine($"❌ Error migrating PurchaseOrgId {recordId}: {ex.Message}");
                 Console.WriteLine($"   Stack Trace: {ex.StackTrace}");
                 if (ex.InnerException != null)
                 {
@@ -139,10 +146,21 @@ public class PurchaseOrganizationMasterMigration : MigrationService
         Console.WriteLine($"   Total records read: {totalReadCount}");
         Console.WriteLine($"   ✓ Successfully inserted: {insertedCount}");
         Console.WriteLine($"   ❌ Skipped (errors): {skippedCount}");
-        
         if (totalReadCount == 0)
         {
             Console.WriteLine($"\n⚠️  WARNING: No records found in TBL_PurchaseOrgMaster table!");
+        }
+
+        // Export migration stats to Excel
+        try
+        {
+            var outputPath = $"PurchaseOrganizationMasterMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+            var skippedRecordsList = _migrationLogger?.GetSkippedRecords().Select(x => (x.RecordIdentifier, x.Message)).ToList() ?? new List<(string, string)>();
+            MigrationStatsExporter.ExportToExcel(outputPath, totalReadCount, insertedCount, skippedCount, _logger, skippedRecordsList);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"Failed to export migration stats: {ex.Message}");
         }
 
         return insertedCount;

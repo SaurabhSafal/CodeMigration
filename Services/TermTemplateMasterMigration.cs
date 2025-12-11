@@ -117,6 +117,7 @@ public class TermTemplateMasterMigration : MigrationService
         int totalRecords = 0;
         int migratedRecords = 0;
         int skippedRecords = 0;
+        var skippedRecordsList = new List<(string RecordId, string Reason)>();
 
         try
         {
@@ -140,7 +141,9 @@ public class TermTemplateMasterMigration : MigrationService
                 if (clauseMasterId == DBNull.Value)
                 {
                     skippedRecords++;
-                    _logger.LogWarning("Skipping record - CLAUSE_MASTER_ID is NULL");
+                    string reason = "CLAUSE_MASTER_ID is NULL";
+                    _logger.LogWarning($"Skipping record - {reason}");
+                    skippedRecordsList.Add(("", reason));
                     continue;
                 }
 
@@ -150,6 +153,8 @@ public class TermTemplateMasterMigration : MigrationService
                 if (processedIds.Contains(clauseMasterIdValue))
                 {
                     skippedRecords++;
+                    string reason = $"Duplicate CLAUSE_MASTER_ID {clauseMasterIdValue}";
+                    skippedRecordsList.Add((clauseMasterIdValue.ToString(), reason));
                     continue;
                 }
 
@@ -157,7 +162,9 @@ public class TermTemplateMasterMigration : MigrationService
                 if (termId == DBNull.Value)
                 {
                     skippedRecords++;
-                    _logger.LogWarning($"Skipping record {clauseMasterIdValue} - TermId is NULL");
+                    string reason = $"TermId is NULL for CLAUSE_MASTER_ID {clauseMasterIdValue}";
+                    _logger.LogWarning($"Skipping record {clauseMasterIdValue} - {reason}");
+                    skippedRecordsList.Add((clauseMasterIdValue.ToString(), reason));
                     continue;
                 }
 
@@ -192,6 +199,18 @@ public class TermTemplateMasterMigration : MigrationService
                 int batchMigrated = await InsertBatchAsync(batch, pgConn, transaction);
                 migratedRecords += batchMigrated;
             }
+
+            // Export migration statistics to Excel
+            string outputPath = System.IO.Path.Combine("migration_outputs", $"TermTemplateMasterMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx");
+            MigrationStatsExporter.ExportToExcel(
+                outputPath,
+                totalRecords,
+                migratedRecords,
+                skippedRecords,
+                _logger,
+                skippedRecordsList
+            );
+            _logger.LogInformation($"Migration statistics exported to {outputPath}");
 
             _logger.LogInformation($"Term Template Master migration completed. Total: {totalRecords}, Migrated: {migratedRecords}, Skipped: {skippedRecords}");
 

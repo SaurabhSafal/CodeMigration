@@ -53,28 +53,55 @@ public class UOMMasterMigration : MigrationService
             pgCmd.Transaction = transaction;
         }
 
+        int totalRecords = 0;
+        var skippedRecordsList = new List<(string RecordId, string Reason)>();
+
         while (await reader.ReadAsync())
         {
+            totalRecords++;
             var uomId = reader["UOM_MAST_ID"];
             var recordId = $"ID={uomId}";
-            
-            pgCmd.Parameters.Clear();
-            pgCmd.Parameters.AddWithValue("@uom_id", uomId);
-            pgCmd.Parameters.AddWithValue("@company_id", reader["ClientSAPId"]);
-            pgCmd.Parameters.AddWithValue("@uom_code", reader["UOMCODE"]);
-            pgCmd.Parameters.AddWithValue("@uom_name", reader["UOMNAME"]);
-            pgCmd.Parameters.AddWithValue("@created_by", 0);
-            pgCmd.Parameters.AddWithValue("@created_date", DateTime.UtcNow);
-            int result = await pgCmd.ExecuteNonQueryAsync();
-            if (result > 0)
+            try
             {
-                migrationLogger.LogInserted(recordId);
+                pgCmd.Parameters.Clear();
+                pgCmd.Parameters.AddWithValue("@uom_id", uomId);
+                pgCmd.Parameters.AddWithValue("@company_id", reader["ClientSAPId"]);
+                pgCmd.Parameters.AddWithValue("@uom_code", reader["UOMCODE"]);
+                pgCmd.Parameters.AddWithValue("@uom_name", reader["UOMNAME"]);
+                pgCmd.Parameters.AddWithValue("@created_by", 0);
+                pgCmd.Parameters.AddWithValue("@created_date", DateTime.UtcNow);
+                int result = await pgCmd.ExecuteNonQueryAsync();
+                if (result > 0)
+                {
+                    migrationLogger.LogInserted(recordId);
+                }
+                else
+                {
+                    migrationLogger.LogSkipped(recordId, "Duplicate or conflict");
+                    skippedRecordsList.Add((recordId, "Duplicate or conflict"));
+                }
+            }
+            catch (Exception ex)
+            {
+                migrationLogger.LogSkipped(recordId, ex.Message);
+                skippedRecordsList.Add((recordId, ex.Message));
             }
         }
-        
         var summary = migrationLogger.GetSummary();
         _logger.LogInformation($"UOM Master Migration completed. Inserted: {summary.TotalInserted}, Skipped: {summary.TotalSkipped}");
-        
+
+        // Export migration statistics to Excel
+        string outputPath = System.IO.Path.Combine("migration_outputs", $"UOMMasterMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx");
+        MigrationStatsExporter.ExportToExcel(
+            outputPath,
+            totalRecords,
+            summary.TotalInserted,
+            summary.TotalSkipped,
+            _logger,
+            skippedRecordsList
+        );
+        _logger.LogInformation($"Migration statistics exported to {outputPath}");
+
         return summary.TotalInserted;
     }
 }

@@ -107,6 +107,7 @@ public class SupplierInactiveMigration : MigrationService
 
         int insertedCount = 0;
         int batchNumber = 0;
+        int skippedCount = 0;
         var batch = new List<Dictionary<string, object>>();
         using var selectCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await selectCmd.ExecuteReaderAsync();
@@ -114,7 +115,11 @@ public class SupplierInactiveMigration : MigrationService
         {
             var vendorId = reader["VendorId"];
             if (vendorId == DBNull.Value || Convert.ToInt32(vendorId) == 0)
+            {
+                skippedCount++;
+                _migrationLogger?.LogSkipped("VendorId is null or zero", $"VendorInactiveId={reader["VendorInactiveId"]}");
                 continue; // Skip records with VendorId = 0
+            }
 
             // Determine inactive boolean: treat 'x' (case-insensitive) as true, otherwise false
             string inactiveRaw = reader["Inactive"] == DBNull.Value ? string.Empty : reader["Inactive"].ToString() ?? string.Empty;
@@ -136,6 +141,7 @@ public class SupplierInactiveMigration : MigrationService
                 ["deleted_date"] = DBNull.Value
             };
             batch.Add(record);
+            _migrationLogger?.LogInserted($"VendorInactiveId={reader["VendorInactiveId"]}");
             if (batch.Count >= BATCH_SIZE)
             {
                 batchNumber++;
@@ -153,6 +159,19 @@ public class SupplierInactiveMigration : MigrationService
             _logger.LogInformation($"Completed batch {batchNumber}. Total records inserted so far: {insertedCount}");
         }
         _logger.LogInformation($"Migration finished. Total records inserted: {insertedCount}");
+
+        // Export migration stats to Excel
+        try
+        {
+            var outputPath = $"SupplierInactiveMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+            var skippedRecordsList = _migrationLogger?.GetSkippedRecords().Select(x => (x.RecordIdentifier, x.Message)).ToList() ?? new List<(string, string)>();
+            MigrationStatsExporter.ExportToExcel(outputPath, insertedCount + skippedCount, insertedCount, skippedCount, _logger, skippedRecordsList);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"Failed to export migration stats: {ex.Message}");
+        }
+
         return insertedCount;
     }
 

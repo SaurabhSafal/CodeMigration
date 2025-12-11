@@ -190,7 +190,21 @@ public class WorkflowMasterMigration : MigrationService
         
         var summary = migrationLogger.GetSummary();
         _logger.LogInformation($"Workflow Master Migration completed. Inserted: {summary.TotalInserted}, Skipped: {summary.TotalSkipped}, Errors: {summary.TotalErrors}");
-        
+
+        // Export migration statistics to Excel
+        var outputPath = "workflow_master_migration_stats.xlsx";
+        var skippedRecords = migrationLogger.GetSkippedRecords()
+            .Select(r => (r.RecordIdentifier ?? "", r.Message ?? ""))
+            .ToList();
+        MigrationStatsExporter.ExportToExcel(
+            outputPath,
+            summary.TotalProcessed,
+            summary.TotalInserted,
+            summary.TotalSkipped,
+            _logger,
+            skippedRecords
+        );
+
         return summary.TotalInserted;
     }
 }

@@ -48,6 +48,7 @@ namespace DataMigration.Services
 
             var migratedRecords = 0;
             var skippedRecords = 0;
+            var skippedDetails = new List<(string, string)>(); // (record id, reason)
 
             try
             {
@@ -209,60 +210,76 @@ namespace DataMigration.Services
                         // Validate event_id (REQUIRED - NOT NULL)
                         if (!record.EventId.HasValue)
                         {
-                            _logger.LogWarning($"Skipping record: event_id is null");
+                            var reason = "event_id is null";
+                            _logger.LogWarning($"Skipping record: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"EventBoqItemsId:{record.EventBoqItemsId}", reason));
                             continue;
                         }
 
                         if (!validEventIds.Contains(record.EventId.Value))
                         {
-                            _logger.LogWarning($"Skipping record: event_id={record.EventId} not found in event_master");
+                            var reason = $"event_id={record.EventId} not found in event_master";
+                            _logger.LogWarning($"Skipping record: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"EventBoqItemsId:{record.EventBoqItemsId}", reason));
                             continue;
                         }
 
                         // Validate supplier_id (REQUIRED - NOT NULL)
                         if (!record.SupplierId.HasValue)
                         {
-                            _logger.LogWarning($"Skipping record: supplier_id is null");
+                            var reason = "supplier_id is null";
+                            _logger.LogWarning($"Skipping record: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"EventBoqItemsId:{record.EventBoqItemsId}", reason));
                             continue;
                         }
 
                         if (!validSupplierIds.Contains(record.SupplierId.Value))
                         {
-                            _logger.LogWarning($"Skipping record: supplier_id={record.SupplierId} not found in supplier_master");
+                            var reason = $"supplier_id={record.SupplierId} not found in supplier_master";
+                            _logger.LogWarning($"Skipping record: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"EventBoqItemsId:{record.EventBoqItemsId}", reason));
                             continue;
                         }
 
                         // Validate event_boq_items_id (REQUIRED - NOT NULL)
                         if (!record.EventBoqItemsId.HasValue)
                         {
-                            _logger.LogWarning($"Skipping record: event_boq_items_id is null");
+                            var reason = "event_boq_items_id is null";
+                            _logger.LogWarning($"Skipping record: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"EventBoqItemsId:{record.EventBoqItemsId}", reason));
                             continue;
                         }
 
                         if (!validEventBoqItemsIds.Contains(record.EventBoqItemsId.Value))
                         {
-                            _logger.LogWarning($"Skipping record: event_boq_items_id={record.EventBoqItemsId} not found in event_boq_items");
+                            var reason = $"event_boq_items_id={record.EventBoqItemsId} not found in event_boq_items";
+                            _logger.LogWarning($"Skipping record: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"EventBoqItemsId:{record.EventBoqItemsId}", reason));
                             continue;
                         }
 
                         // Validate event_supplier_line_item_id (REQUIRED - NOT NULL)
                         if (!record.EventSupplierLineItemId.HasValue)
                         {
-                            _logger.LogWarning($"Skipping record: event_supplier_line_item_id is null");
+                            var reason = "event_supplier_line_item_id is null";
+                            _logger.LogWarning($"Skipping record: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"EventBoqItemsId:{record.EventBoqItemsId}", reason));
                             continue;
                         }
 
                         if (!validEventSupplierLineItemIds.Contains(record.EventSupplierLineItemId.Value))
                         {
-                            _logger.LogWarning($"Skipping record: event_supplier_line_item_id={record.EventSupplierLineItemId} not found in event_supplier_line_item");
+                            var reason = $"event_supplier_line_item_id={record.EventSupplierLineItemId} not found in event_supplier_line_item";
+                            _logger.LogWarning($"Skipping record: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"EventBoqItemsId:{record.EventBoqItemsId}", reason));
                             continue;
                         }
 
@@ -270,16 +287,20 @@ namespace DataMigration.Services
                         var lookupKey = $"{record.EventId.Value}_{record.SupplierId.Value}";
                         if (!eventSupplierPriceBidLookup.TryGetValue(lookupKey, out var eventSupplierPriceBidId))
                         {
-                            _logger.LogWarning($"Skipping record: event_supplier_price_bid_id not found for event_id={record.EventId}, supplier_id={record.SupplierId}");
+                            var reason = $"event_supplier_price_bid_id not found for event_id={record.EventId}, supplier_id={record.SupplierId}";
+                            _logger.LogWarning($"Skipping record: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"EventBoqItemsId:{record.EventBoqItemsId}", reason));
                             continue;
                         }
 
                         // Validate boq_item_unit_price (REQUIRED - NOT NULL)
                         if (!record.Rate.HasValue)
                         {
-                            _logger.LogWarning($"Skipping record: Rate is null");
+                            var reason = "Rate is null";
+                            _logger.LogWarning($"Skipping record: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"EventBoqItemsId:{record.EventBoqItemsId}", reason));
                             continue;
                         }
 
@@ -304,8 +325,10 @@ namespace DataMigration.Services
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError($"Error processing record: {ex.Message}");
+                        var reason = ex.Message;
+                        _logger.LogError($"Error processing record: {reason}");
                         skippedRecords++;
+                        skippedDetails.Add(($"EventBoqItemsId:{record.EventBoqItemsId}", reason));
                     }
                 }
 
@@ -315,6 +338,17 @@ namespace DataMigration.Services
                 }
 
                 _logger.LogInformation($"Migration completed. Migrated: {migratedRecords}, Skipped: {skippedRecords}");
+
+                // Export migration stats to Excel
+                var totalRecords = migratedRecords + skippedRecords;
+                MigrationStatsExporter.ExportToExcel(
+                    "migration_outputs/SupplierPriceBoqItemsMigration_Stats.xlsx",
+                    totalRecords,
+                    migratedRecords,
+                    skippedRecords,
+                    _logger,
+                    skippedDetails
+                );
             }
             catch (Exception ex)
             {
@@ -394,6 +428,7 @@ namespace DataMigration.Services
 
             var upsertedRecords = 0;
             var skippedRecords = 0;
+            var skippedDetails = new List<(string, string)>();
 
             try
             {
@@ -545,37 +580,47 @@ namespace DataMigration.Services
                         if (!record.EventId.HasValue || !record.SupplierId.HasValue || !record.EventBoqItemsId.HasValue ||
                             !record.EventSupplierLineItemId.HasValue || !record.Rate.HasValue)
                         {
-                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: Missing required fields");
+                            var reason = "Missing required fields";
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"UPDATEID:{record.UPDATEID}", reason));
                             continue;
                         }
 
                         // Validate foreign keys
                         if (!validEventIds.Contains(record.EventId.Value))
                         {
-                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: event_id={record.EventId} not found");
+                            var reason = $"event_id={record.EventId} not found";
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"UPDATEID:{record.UPDATEID}", reason));
                             continue;
                         }
 
                         if (!validSupplierIds.Contains(record.SupplierId.Value))
                         {
-                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: supplier_id={record.SupplierId} not found");
+                            var reason = $"supplier_id={record.SupplierId} not found";
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"UPDATEID:{record.UPDATEID}", reason));
                             continue;
                         }
 
                         if (!validEventBoqItemsIds.Contains(record.EventBoqItemsId.Value))
                         {
-                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: event_boq_items_id={record.EventBoqItemsId} not found");
+                            var reason = $"event_boq_items_id={record.EventBoqItemsId} not found";
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"UPDATEID:{record.UPDATEID}", reason));
                             continue;
                         }
 
                         if (!validEventSupplierLineItemIds.Contains(record.EventSupplierLineItemId.Value))
                         {
-                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: event_supplier_line_item_id={record.EventSupplierLineItemId} not found");
+                            var reason = $"event_supplier_line_item_id={record.EventSupplierLineItemId} not found";
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"UPDATEID:{record.UPDATEID}", reason));
                             continue;
                         }
 
@@ -583,8 +628,10 @@ namespace DataMigration.Services
                         var lookupKey = $"{record.EventId.Value}_{record.SupplierId.Value}";
                         if (!eventSupplierPriceBidLookup.TryGetValue(lookupKey, out var eventSupplierPriceBidId))
                         {
-                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: event_supplier_price_bid_id not found");
+                            var reason = "event_supplier_price_bid_id not found";
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"UPDATEID:{record.UPDATEID}", reason));
                             continue;
                         }
 
@@ -641,12 +688,25 @@ namespace DataMigration.Services
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError($"UPDATEID {record.UPDATEID}: {ex.Message}");
+                        var reason = ex.Message;
+                        _logger.LogError($"UPDATEID {record.UPDATEID}: {reason}");
                         skippedRecords++;
+                        skippedDetails.Add(($"UPDATEID:{record.UPDATEID}", reason));
                     }
                 }
 
                 _logger.LogInformation($"UPSERT completed. Upserted: {upsertedRecords}, Skipped: {skippedRecords}");
+
+                // Export migration stats to Excel
+                var totalRecords = upsertedRecords + skippedRecords;
+                MigrationStatsExporter.ExportToExcel(
+                    "migration_outputs/SupplierPriceBoqItemsUpsert_Stats.xlsx",
+                    totalRecords,
+                    upsertedRecords,
+                    skippedRecords,
+                    _logger,
+                    skippedDetails
+                );
             }
             catch (Exception ex)
             {

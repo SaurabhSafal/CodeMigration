@@ -48,6 +48,7 @@ namespace DataMigration.Services
 
             var migratedRecords = 0;
             var skippedRecords = 0;
+            var skippedDetails = new List<(string RecordId, string Reason)>();
 
             try
             {
@@ -141,6 +142,7 @@ namespace DataMigration.Services
                         {
                             _logger.LogWarning($"Skipping TechApprovalId {record.TechApprovalId}: AWARDEVENTMAINID is null");
                             skippedRecords++;
+                            skippedDetails.Add((record.TechApprovalId.ToString(), "AWARDEVENTMAINID is null"));
                             continue;
                         }
 
@@ -148,6 +150,7 @@ namespace DataMigration.Services
                         {
                             _logger.LogWarning($"Skipping TechApprovalId {record.TechApprovalId}: AWARDEVENTMAINID={record.AwardEventMainId} not found in nfa_header");
                             skippedRecords++;
+                            skippedDetails.Add((record.TechApprovalId.ToString(), $"AWARDEVENTMAINID={record.AwardEventMainId} not found in nfa_header"));
                             continue;
                         }
 
@@ -201,6 +204,7 @@ namespace DataMigration.Services
                     {
                         _logger.LogError($"Error processing TechApprovalId {record.TechApprovalId}: {ex.Message}");
                         skippedRecords++;
+                        skippedDetails.Add((record.TechApprovalId.ToString(), $"Exception: {ex.Message}"));
                     }
                 }
 
@@ -210,6 +214,16 @@ namespace DataMigration.Services
                 }
 
                 _logger.LogInformation($"Migration completed. Migrated: {migratedRecords}, Skipped: {skippedRecords}");
+
+                // Export migration stats to Excel
+                MigrationStatsExporter.ExportToExcel(
+                    "NfaWorkflowMigrationStats.xlsx",
+                    sourceData.Count,
+                    migratedRecords,
+                    skippedRecords,
+                    _logger,
+                    skippedDetails
+                );
             }
             catch (Exception ex)
             {

@@ -121,6 +121,7 @@ public class TechnicalParameterTemplateMigration : MigrationService
         int totalRecords = 0;
         int migratedRecords = 0;
         int skippedRecords = 0;
+        var skippedRecordsList = new List<(string RecordId, string Reason)>();
 
         try
         {
@@ -147,7 +148,9 @@ public class TechnicalParameterTemplateMigration : MigrationService
                 if (techParaSubId == DBNull.Value)
                 {
                     skippedRecords++;
-                    _logger.LogWarning("Skipping record - TechParaSub_Id is NULL");
+                    string reason = "TechParaSub_Id is NULL";
+                    _logger.LogWarning($"Skipping record - {reason}");
+                    skippedRecordsList.Add(("", reason));
                     continue;
                 }
 
@@ -157,6 +160,8 @@ public class TechnicalParameterTemplateMigration : MigrationService
                 if (processedIds.Contains(techParaSubIdValue))
                 {
                     skippedRecords++;
+                    string reason = $"Duplicate TechParaSub_Id {techParaSubIdValue}";
+                    skippedRecordsList.Add((techParaSubIdValue.ToString(), reason));
                     continue;
                 }
 
@@ -200,6 +205,18 @@ public class TechnicalParameterTemplateMigration : MigrationService
                 int batchMigrated = await InsertBatchAsync(batch, pgConn, transaction);
                 migratedRecords += batchMigrated;
             }
+
+            // Export migration statistics to Excel
+            string outputPath = System.IO.Path.Combine("migration_outputs", $"TechnicalParameterTemplateMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx");
+            MigrationStatsExporter.ExportToExcel(
+                outputPath,
+                totalRecords,
+                migratedRecords,
+                skippedRecords,
+                _logger,
+                skippedRecordsList
+            );
+            _logger.LogInformation($"Migration statistics exported to {outputPath}");
 
             var message = $"Technical Parameter Template migration completed. Total: {totalRecords}, Migrated: {migratedRecords}, Skipped: {skippedRecords}";
             _logger.LogInformation(message);

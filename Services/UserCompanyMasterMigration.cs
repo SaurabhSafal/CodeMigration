@@ -111,6 +111,7 @@ public class UserCompanyMasterMigration : MigrationService
         int totalRecords = 0;
         int migratedRecords = 0;
         int skippedRecords = 0;
+        var skippedRecordsList = new List<(string RecordId, string Reason)>();
 
         try
         {
@@ -142,7 +143,9 @@ public class UserCompanyMasterMigration : MigrationService
                 if (ucId == DBNull.Value)
                 {
                     skippedRecords++;
-                    _logger.LogWarning("Skipping record - UC_id is NULL");
+                    string reason = "UC_id is NULL";
+                    _logger.LogWarning($"Skipping record - {reason}");
+                    skippedRecordsList.Add(("", reason));
                     continue;
                 }
 
@@ -152,6 +155,8 @@ public class UserCompanyMasterMigration : MigrationService
                 if (processedIds.Contains(ucIdValue))
                 {
                     skippedRecords++;
+                    string reason = $"Duplicate UC_id {ucIdValue}";
+                    skippedRecordsList.Add((ucIdValue.ToString(), reason));
                     continue;
                 }
 
@@ -162,7 +167,9 @@ public class UserCompanyMasterMigration : MigrationService
                     if (!validCompanyIds.Contains(clientIdValue))
                     {
                         skippedRecords++;
-                        _logger.LogWarning($"Skipping UC_id {ucIdValue} - Invalid company_id: {clientIdValue}");
+                        string reason = $"Invalid company_id: {clientIdValue}";
+                        _logger.LogWarning($"Skipping UC_id {ucIdValue} - {reason}");
+                        skippedRecordsList.Add((ucIdValue.ToString(), reason));
                         continue;
                     }
                 }
@@ -174,7 +181,9 @@ public class UserCompanyMasterMigration : MigrationService
                     if (!validUserIds.Contains(userIdValue))
                     {
                         skippedRecords++;
-                        _logger.LogWarning($"Skipping UC_id {ucIdValue} - Invalid user_id: {userIdValue}");
+                        string reason = $"Invalid user_id: {userIdValue}";
+                        _logger.LogWarning($"Skipping UC_id {ucIdValue} - {reason}");
+                        skippedRecordsList.Add((ucIdValue.ToString(), reason));
                         continue;
                     }
                 }
@@ -210,6 +219,18 @@ public class UserCompanyMasterMigration : MigrationService
                 int batchMigrated = await InsertBatchAsync(batch, pgConn, transaction);
                 migratedRecords += batchMigrated;
             }
+
+            // Export migration statistics to Excel
+            string outputPath = System.IO.Path.Combine("migration_outputs", $"UserCompanyMasterMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx");
+            MigrationStatsExporter.ExportToExcel(
+                outputPath,
+                totalRecords,
+                migratedRecords,
+                skippedRecords,
+                _logger,
+                skippedRecordsList
+            );
+            _logger.LogInformation($"Migration statistics exported to {outputPath}");
 
             _logger.LogInformation($"User Company Master migration completed. Total: {totalRecords}, Migrated: {migratedRecords}, Skipped: {skippedRecords}");
 

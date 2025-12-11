@@ -96,6 +96,7 @@ ON CONFLICT (user_term_id) DO UPDATE SET
         
         int insertedCount = 0;
         int skippedCount = 0;
+        var skippedRecordsList = new List<(string RecordId, string Reason)>();
         int batchNumber = 0;
         var batch = new List<Dictionary<string, object>>();
 
@@ -118,8 +119,21 @@ ON CONFLICT (user_term_id) DO UPDATE SET
             // Validate required keys
             if (clauseEventWiseId == DBNull.Value)
             {
-                _logger.LogWarning($"Skipping row: CLAUSEEVENTWISEID is NULL.");
+                string reason = "CLAUSEEVENTWISEID is NULL.";
+                _logger.LogWarning($"Skipping row: {reason}");
                 skippedCount++;
+                skippedRecordsList.Add(("", reason));
+                continue;
+            }
+
+            int clauseEventWiseIdValue = Convert.ToInt32(clauseEventWiseId);
+
+            // Skip duplicates
+            if (batch.Any(r => Convert.ToInt32(r["user_term_id"]) == clauseEventWiseIdValue))
+            {
+                string reason = $"Duplicate CLAUSEEVENTWISEID {clauseEventWiseIdValue}";
+                skippedCount++;
+                skippedRecordsList.Add((clauseEventWiseIdValue.ToString(), reason));
                 continue;
             }
 
@@ -129,8 +143,10 @@ ON CONFLICT (user_term_id) DO UPDATE SET
                 int eventIdValue = Convert.ToInt32(eventId);
                 if (!validEventIds.Contains(eventIdValue))
                 {
-                    _logger.LogWarning($"Skipping CLAUSEEVENTWISEID {clauseEventWiseId}: event_id {eventIdValue} not found in event_master.");
+                    string reason = $"event_id {eventIdValue} not found in event_master.";
+                    _logger.LogWarning($"Skipping CLAUSEEVENTWISEID {clauseEventWiseId}: {reason}");
                     skippedCount++;
+                    skippedRecordsList.Add((clauseEventWiseIdValue.ToString(), reason));
                     continue;
                 }
             }
@@ -167,6 +183,19 @@ ON CONFLICT (user_term_id) DO UPDATE SET
             _logger.LogInformation($"Inserting final batch {batchNumber} with {batch.Count} records...");
             insertedCount += await InsertBatchAsync(pgConn, batch, transaction, batchNumber);
         }
+
+        // Export migration statistics to Excel
+        int totalRecords = insertedCount + skippedCount;
+        string outputPath = System.IO.Path.Combine("migration_outputs", $"UserTermMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx");
+        MigrationStatsExporter.ExportToExcel(
+            outputPath,
+            totalRecords,
+            insertedCount,
+            skippedCount,
+            _logger,
+            skippedRecordsList
+        );
+        _logger.LogInformation($"Migration statistics exported to {outputPath}");
 
         _logger.LogInformation($"UserTerm migration completed. Inserted: {insertedCount}, Skipped: {skippedCount}");
         return insertedCount;

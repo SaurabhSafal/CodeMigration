@@ -46,6 +46,8 @@ namespace DataMigration.Services
 
             var migratedRecords = 0;
             var skippedRecords = 0;
+            var skippedDetails = new List<(int PB_ChargesID, string Reason)>();
+            var totalRecords = 0;
 
             try
             {
@@ -81,7 +83,8 @@ namespace DataMigration.Services
                     }
                 }
 
-                _logger.LogInformation($"Found {sourceData.Count} records from TBL_PB_OTHERCHARGESMST");
+                totalRecords = sourceData.Count;
+                _logger.LogInformation($"Found {totalRecords} records from TBL_PB_OTHERCHARGESMST");
 
                 const int batchSize = 500;
                 var insertBatch = new List<TargetRow>();
@@ -90,6 +93,14 @@ namespace DataMigration.Services
                 {
                     try
                     {
+                        // Skip inactive records (optional - based on business logic)
+                        if (record.ISACTIVE.HasValue && record.ISACTIVE.Value == 0)
+                        {
+                            skippedRecords++;
+                            skippedDetails.Add((record.PB_ChargesID, "ISACTIVE = 0 (inactive)"));
+                            continue;
+                        }
+
                         var targetRow = new TargetRow
                         {
                             PriceBidChargesId = record.PB_ChargesID,
@@ -111,6 +122,7 @@ namespace DataMigration.Services
                         var errorMsg = $"PB_ChargesID {record.PB_ChargesID}: {ex.Message}";
                         _logger.LogError(errorMsg);
                         skippedRecords++;
+                        skippedDetails.Add((record.PB_ChargesID, errorMsg));
                     }
                 }
 
@@ -125,7 +137,18 @@ namespace DataMigration.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Migration failed");
-                throw;
+            }
+
+            // Export migration stats
+            try
+            {
+                var outputPath = $"PriceBidChargesMasterMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+                var skippedRecordsList = skippedDetails.Select(x => (x.PB_ChargesID.ToString(), x.Reason)).ToList();
+                MigrationStatsExporter.ExportToExcel(outputPath, totalRecords, migratedRecords, skippedRecords, _logger, skippedRecordsList);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Failed to export migration stats: {ex.Message}");
             }
 
             return migratedRecords;

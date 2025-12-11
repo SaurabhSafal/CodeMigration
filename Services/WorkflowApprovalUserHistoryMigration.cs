@@ -79,7 +79,9 @@ public class WorkflowApprovalUserHistoryMigration : MigrationService
 
         int insertedCount = 0;
         int processedCount = 0;
-        
+        int skippedCount = 0;
+        var skippedRecords = new List<(int RecordNo, string Reason, Dictionary<string, object> Details)>();
+
         try
         {
             while (await reader.ReadAsync())
@@ -87,13 +89,6 @@ public class WorkflowApprovalUserHistoryMigration : MigrationService
                 processedCount++;
                 try
                 {
-                    // Create a new command for each record to avoid transaction issues
-                    using var pgCmd = new NpgsqlCommand(InsertQuery, pgConn);
-                    if (transaction != null)
-                    {
-                        pgCmd.Transaction = transaction;
-                    }
-
                     // Map fields with validation
                     var workFlowSubSubHistoryId = reader.IsDBNull(reader.GetOrdinal("WorkFlowSubSubHistoryId")) ? 0 : Convert.ToInt32(reader["WorkFlowSubSubHistoryId"]);
                     var workFlowSubSubId = reader.IsDBNull(reader.GetOrdinal("WorkFlowSubSubId")) ? 0 : Convert.ToInt32(reader["WorkFlowSubSubId"]);
@@ -104,80 +99,85 @@ public class WorkflowApprovalUserHistoryMigration : MigrationService
                     var createdBy = reader.IsDBNull(reader.GetOrdinal("CreatedBy")) ? 0 : Convert.ToInt32(reader["CreatedBy"]);
                     var createDate = reader.IsDBNull(reader.GetOrdinal("CreateDate")) ? DateTime.UtcNow : Convert.ToDateTime(reader["CreateDate"]);
 
+                    var details = new Dictionary<string, object>
+                    {
+                        {"WorkFlowSubSubHistoryId", workFlowSubSubHistoryId},
+                        {"WorkFlowSubSubId", workFlowSubSubId},
+                        {"WorkFlowMainId", workFlowMainId},
+                        {"WorkFlowSubId", workFlowSubId},
+                        {"ApprovedBy", approvedBy},
+                        {"Level", level},
+                        {"CreatedBy", createdBy},
+                        {"CreateDate", createDate}
+                    };
+
                     // Validate required fields
                     if (workFlowSubSubHistoryId <= 0)
                     {
-                        Console.WriteLine($"Skipping record {processedCount}: Invalid WorkFlowSubSubHistoryId ({workFlowSubSubHistoryId})");
+                        skippedCount++;
+                        skippedRecords.Add((processedCount, $"Invalid WorkFlowSubSubHistoryId ({workFlowSubSubHistoryId})", details));
                         continue;
                     }
-                    
                     if (workFlowSubSubId <= 0)
                     {
-                        Console.WriteLine($"Skipping record {processedCount}: Invalid WorkFlowSubSubId ({workFlowSubSubId})");
+                        skippedCount++;
+                        skippedRecords.Add((processedCount, $"Invalid WorkFlowSubSubId ({workFlowSubSubId})", details));
                         continue;
                     }
-                    
                     if (workFlowMainId <= 0)
                     {
-                        Console.WriteLine($"Skipping record {processedCount}: Invalid WorkFlowMainId ({workFlowMainId})");
+                        skippedCount++;
+                        skippedRecords.Add((processedCount, $"Invalid WorkFlowMainId ({workFlowMainId})", details));
                         continue;
                     }
-                    
                     if (workFlowSubId <= 0)
                     {
-                        Console.WriteLine($"Skipping record {processedCount}: Invalid WorkFlowSubId ({workFlowSubId})");
+                        skippedCount++;
+                        skippedRecords.Add((processedCount, $"Invalid WorkFlowSubId ({workFlowSubId})", details));
                         continue;
                     }
 
                     // Check if workflow_master_id exists
                     using var checkMasterCmd = new NpgsqlCommand("SELECT 1 FROM workflow_master WHERE workflow_id = @workflow_id LIMIT 1", pgConn);
-                    if (transaction != null)
-                    {
-                        checkMasterCmd.Transaction = transaction;
-                    }
+                    if (transaction != null) checkMasterCmd.Transaction = transaction;
                     checkMasterCmd.Parameters.AddWithValue("@workflow_id", workFlowMainId);
-                    
                     var masterExists = await checkMasterCmd.ExecuteScalarAsync();
                     if (masterExists == null)
                     {
-                        Console.WriteLine($"Skipping record {processedCount}: WorkFlowMainId ({workFlowMainId}) not found in workflow_master table");
+                        skippedCount++;
+                        skippedRecords.Add((processedCount, $"WorkFlowMainId ({workFlowMainId}) not found in workflow_master table", details));
                         continue;
                     }
 
                     // Check if workflow_amount_id exists
                     using var checkAmountCmd = new NpgsqlCommand("SELECT 1 FROM workflow_amount WHERE workflow_amount_id = @workflow_amount_id LIMIT 1", pgConn);
-                    if (transaction != null)
-                    {
-                        checkAmountCmd.Transaction = transaction;
-                    }
+                    if (transaction != null) checkAmountCmd.Transaction = transaction;
                     checkAmountCmd.Parameters.AddWithValue("@workflow_amount_id", workFlowSubId);
-                    
                     var amountExists = await checkAmountCmd.ExecuteScalarAsync();
                     if (amountExists == null)
                     {
-                        Console.WriteLine($"Skipping record {processedCount}: WorkFlowSubId ({workFlowSubId}) not found in workflow_amount table");
+                        skippedCount++;
+                        skippedRecords.Add((processedCount, $"WorkFlowSubId ({workFlowSubId}) not found in workflow_amount table", details));
                         continue;
                     }
 
                     // Check if workflow_approval_user_id exists
                     using var checkUserCmd = new NpgsqlCommand("SELECT 1 FROM workflow_approval_user WHERE workflow_approval_user_id = @workflow_approval_user_id LIMIT 1", pgConn);
-                    if (transaction != null)
-                    {
-                        checkUserCmd.Transaction = transaction;
-                    }
+                    if (transaction != null) checkUserCmd.Transaction = transaction;
                     checkUserCmd.Parameters.AddWithValue("@workflow_approval_user_id", workFlowSubSubId);
-                    
                     var userExists = await checkUserCmd.ExecuteScalarAsync();
                     if (userExists == null)
                     {
-                        Console.WriteLine($"Skipping record {processedCount}: WorkFlowSubSubId ({workFlowSubSubId}) not found in workflow_approval_user table");
+                        skippedCount++;
+                        skippedRecords.Add((processedCount, $"WorkFlowSubSubId ({workFlowSubSubId}) not found in workflow_approval_user table", details));
                         continue;
                     }
 
                     // Convert ApprovedBy to array format
                     int[] approvedByArray = { approvedBy };
 
-                    // Add parameters
+                    // Insert record
+                    using var pgCmd = new NpgsqlCommand(InsertQuery, pgConn, transaction);
                     pgCmd.Parameters.AddWithValue("@workflow_approval_user_history_id", workFlowSubSubHistoryId);
                     pgCmd.Parameters.AddWithValue("@workflow_approval_user_id", workFlowSubSubId);
                     pgCmd.Parameters.AddWithValue("@workflow_master_id", workFlowMainId);
@@ -197,16 +197,18 @@ public class WorkflowApprovalUserHistoryMigration : MigrationService
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Error processing record {processedCount}: {ex.Message}");
-                    Console.WriteLine($"Record details - WorkFlowSubSubHistoryId: {(reader.IsDBNull(reader.GetOrdinal("WorkFlowSubSubHistoryId")) ? "NULL" : reader["WorkFlowSubSubHistoryId"].ToString())}");
-                    
-                    // If using transaction, any error aborts the transaction
+                    skippedCount++;
+                    var errorDetails = new Dictionary<string, object>
+                    {
+                        {"Exception", ex.Message},
+                        {"WorkFlowSubSubHistoryId", reader.IsDBNull(reader.GetOrdinal("WorkFlowSubSubHistoryId")) ? "NULL" : reader["WorkFlowSubSubHistoryId"]?.ToString() ?? "NULL" }
+                    };
+                    skippedRecords.Add((processedCount, $"Error: {ex.Message}", errorDetails));
                     if (transaction != null)
                     {
                         Console.WriteLine("Error occurred in transaction context. Rolling back and stopping migration.");
-                        throw; // Re-throw to trigger rollback in the base class
+                        throw;
                     }
-                    // For non-transactional operations, continue with next record
                 }
             }
         }
@@ -216,7 +218,18 @@ public class WorkflowApprovalUserHistoryMigration : MigrationService
             throw;
         }
 
-        Console.WriteLine($"WorkflowApprovalUserHistory Migration completed. Processed: {processedCount}, Inserted: {insertedCount}");
+        // Export migration statistics to Excel
+        var outputPath = "workflow_approval_user_history_migration_stats.xlsx";
+        MigrationStatsExporter.ExportToExcel(
+            outputPath,
+            processedCount,
+            insertedCount,
+            skippedCount,
+            _logger,
+            skippedRecords.Select(r => ((string)r.RecordNo.ToString(), r.Reason)).ToList()
+        );
+
+        Console.WriteLine($"WorkflowApprovalUserHistory Migration completed. Processed: {processedCount}, Inserted: {insertedCount}, Skipped: {skippedCount}");
         return insertedCount;
     }
 }

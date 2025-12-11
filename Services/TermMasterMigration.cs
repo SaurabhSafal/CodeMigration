@@ -105,6 +105,7 @@ public class TermMasterMigration : MigrationService
         int totalRecords = 0;
         int migratedRecords = 0;
         int skippedRecords = 0;
+        var skippedRecordsList = new List<(string RecordId, string Reason)>();
 
         try
         {
@@ -127,7 +128,9 @@ public class TermMasterMigration : MigrationService
                 if (termId == DBNull.Value)
                 {
                     skippedRecords++;
-                    _logger.LogWarning("Skipping record - TERMID is NULL");
+                    string reason = "TERMID is NULL";
+                    _logger.LogWarning($"Skipping record - {reason}");
+                    skippedRecordsList.Add(("", reason));
                     continue;
                 }
 
@@ -137,6 +140,8 @@ public class TermMasterMigration : MigrationService
                 if (processedIds.Contains(termIdValue))
                 {
                     skippedRecords++;
+                    string reason = $"Duplicate TERMID {termIdValue}";
+                    skippedRecordsList.Add((termIdValue.ToString(), reason));
                     continue;
                 }
 
@@ -170,6 +175,18 @@ public class TermMasterMigration : MigrationService
                 int batchMigrated = await InsertBatchAsync(batch, pgConn, transaction);
                 migratedRecords += batchMigrated;
             }
+
+            // Export migration statistics to Excel
+            string outputPath = System.IO.Path.Combine("migration_outputs", $"TermMasterMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx");
+            MigrationStatsExporter.ExportToExcel(
+                outputPath,
+                totalRecords,
+                migratedRecords,
+                skippedRecords,
+                _logger,
+                skippedRecordsList
+            );
+            _logger.LogInformation($"Migration statistics exported to {outputPath}");
 
             _logger.LogInformation($"Term Master migration completed. Total: {totalRecords}, Migrated: {migratedRecords}, Skipped: {skippedRecords}");
 

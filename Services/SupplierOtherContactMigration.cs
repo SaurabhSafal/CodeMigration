@@ -153,7 +153,6 @@ public class SupplierOtherContactMigration : MigrationService
         while (await reader2.ReadAsync())
         {
             processedCount++;
-            
             try
             {
                 var supplierIdObj = reader2["VendorID"];
@@ -163,6 +162,7 @@ public class SupplierOtherContactMigration : MigrationService
                 if (!_validSupplierIds.Contains(supplierId))
                 {
                     skippedCount++;
+                    _migrationLogger?.LogSkipped($"VendorID {supplierId} not found in supplier_master", $"ComunicationID={reader2["ComunicationID"]}");
                     if (skippedCount <= 10) // Log first 10 skipped records
                     {
                         _logger.LogWarning($"Skipping ComunicationID {reader2["ComunicationID"]} - VendorID {supplierId} not found in supplier_master");
@@ -186,6 +186,7 @@ public class SupplierOtherContactMigration : MigrationService
                     ["@deleted_date"] = DBNull.Value
                 };
                 batch.Add(record);
+                _migrationLogger?.LogInserted($"ComunicationID={reader2["ComunicationID"]}");
                 
                 if (batch.Count >= BATCH_SIZE)
                 {
@@ -210,8 +211,9 @@ public class SupplierOtherContactMigration : MigrationService
             }
             catch (Exception ex)
             {
+                skippedCount++;
+                _migrationLogger?.LogSkipped(ex.Message, $"ComunicationID={reader2["ComunicationID"]}");
                 _logger.LogError($"Error processing record at position {processedCount}: {ex.Message}");
-                throw;
             }
         }
         
@@ -228,7 +230,19 @@ public class SupplierOtherContactMigration : MigrationService
             $"SupplierOtherContact migration completed. " +
             $"Total processed: {processedCount} | Inserted: {insertedCount} | Skipped: {skippedCount} | " +
             $"Duration: {stopwatch.Elapsed:hh\\:mm\\:ss}");
-        
+
+        // Export migration stats to Excel
+        try
+        {
+            var outputPath = $"SupplierOtherContactMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+            var skippedRecordsList = _migrationLogger?.GetSkippedRecords().Select(x => (x.RecordIdentifier, x.Message)).ToList() ?? new List<(string, string)>();
+            MigrationStatsExporter.ExportToExcel(outputPath, processedCount, insertedCount, skippedCount, _logger, skippedRecordsList);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"Failed to export migration stats: {ex.Message}");
+        }
+
         return insertedCount;
     }
 

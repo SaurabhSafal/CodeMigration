@@ -116,6 +116,7 @@ public class UserPriceBidNonPricingMigration : MigrationService
         int totalRecords = 0;
         int migratedRecords = 0;
         int skippedRecords = 0;
+        var skippedRecordsList = new List<(string RecordId, string Reason)>();
 
         try
         {
@@ -143,7 +144,9 @@ public class UserPriceBidNonPricingMigration : MigrationService
                 if (pbBuyerNonPricingId == DBNull.Value)
                 {
                     skippedRecords++;
-                    _logger.LogWarning("Skipping record - PB_BuyerNonPricingId is NULL");
+                    string reason = "PB_BuyerNonPricingId is NULL";
+                    _logger.LogWarning($"Skipping record - {reason}");
+                    skippedRecordsList.Add(("", reason));
                     continue;
                 }
 
@@ -153,6 +156,8 @@ public class UserPriceBidNonPricingMigration : MigrationService
                 if (processedIds.Contains(pbBuyerNonPricingIdValue))
                 {
                     skippedRecords++;
+                    string reason = $"Duplicate PB_BuyerNonPricingId {pbBuyerNonPricingIdValue}";
+                    skippedRecordsList.Add((pbBuyerNonPricingIdValue.ToString(), reason));
                     continue;
                 }
 
@@ -163,7 +168,9 @@ public class UserPriceBidNonPricingMigration : MigrationService
                     if (!validEventIds.Contains(eventIdValue))
                     {
                         skippedRecords++;
-                        _logger.LogWarning($"Skipping PB_BuyerNonPricingId {pbBuyerNonPricingIdValue} - Invalid event_id: {eventIdValue}");
+                        string reason = $"Invalid event_id: {eventIdValue}";
+                        _logger.LogWarning($"Skipping PB_BuyerNonPricingId {pbBuyerNonPricingIdValue} - {reason}");
+                        skippedRecordsList.Add((pbBuyerNonPricingIdValue.ToString(), reason));
                         continue;
                     }
                 }
@@ -200,6 +207,18 @@ public class UserPriceBidNonPricingMigration : MigrationService
                 int batchMigrated = await InsertBatchAsync(batch, pgConn, transaction);
                 migratedRecords += batchMigrated;
             }
+
+            // Export migration statistics to Excel
+            string outputPath = System.IO.Path.Combine("migration_outputs", $"UserPriceBidNonPricingMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx");
+            MigrationStatsExporter.ExportToExcel(
+                outputPath,
+                totalRecords,
+                migratedRecords,
+                skippedRecords,
+                _logger,
+                skippedRecordsList
+            );
+            _logger.LogInformation($"Migration statistics exported to {outputPath}");
 
             _logger.LogInformation($"User Price Bid Non Pricing migration completed. Total: {totalRecords}, Migrated: {migratedRecords}, Skipped: {skippedRecords}");
 

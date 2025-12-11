@@ -14,6 +14,9 @@ public class SupplierMasterMigration : MigrationService
     private MigrationLogger? _migrationLogger;
     private const int BATCH_SIZE = 1000; // Process in batches of 1000 records
     private const int PROGRESS_UPDATE_INTERVAL = 100; // Update progress every 100 records
+    
+    // Track skipped records for detailed reporting
+    private List<(string RecordId, string Reason)> _skippedRecords = new List<(string, string)>();
 
     // SQL Server: TBL_VENDORMASTERNEW -> PostgreSQL: supplier_master
     protected override string SelectQuery => @"
@@ -343,6 +346,22 @@ public class SupplierMasterMigration : MigrationService
         stopwatch.Stop();
         progress.ReportCompleted(processedCount, insertedCount, stopwatch.Elapsed);
         
+        // Log skipped records details
+        foreach (var skippedRecord in _skippedRecords)
+        {
+            _logger.LogWarning($"Skipped record {skippedRecord.RecordId}: {skippedRecord.Reason}");
+        }
+        
+        // Export migration statistics with skipped record details
+        MigrationStatsExporter.ExportToExcel(
+            "SupplierMaster_migration_stats.xlsx",
+            processedCount,
+            insertedCount,
+            skippedCount,
+            _logger,
+            _skippedRecords
+        );
+        
         return insertedCount;
     }
 
@@ -379,6 +398,7 @@ public class SupplierMasterMigration : MigrationService
             if (vendorId == 0)
             {
                 Console.WriteLine($"Skipping record {recordNumber} - Missing required VendorID");
+                _skippedRecords.Add((recordNumber.ToString(), "Missing required VendorID"));
                 return null;
             }
 

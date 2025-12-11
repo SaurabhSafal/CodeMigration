@@ -70,17 +70,19 @@ public class PODocTypeMasterMigration : MigrationService
     {
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await sqlCmd.ExecuteReaderAsync();
-
         using var pgCmd = new NpgsqlCommand(InsertQuery, pgConn);
         if (transaction != null)
         {
             pgCmd.Transaction = transaction;
         }
-        
+        int totalRecords = 0;
+        int insertedRecords = 0;
+        var skippedRecords = new List<(string RecordId, string Reason)>();
         try
         {
             while (await reader.ReadAsync())
             {
+                totalRecords++;
                 try
                 {
                     // Validate field values before processing
@@ -88,22 +90,20 @@ public class PODocTypeMasterMigration : MigrationService
                     var poDocTypeCode = reader.IsDBNull(reader.GetOrdinal("PODocTypeCode")) ? "" : reader["PODocTypeCode"].ToString();
                     var poDocTypeDesc = reader.IsDBNull(reader.GetOrdinal("PODocTypeDesc")) ? "" : reader["PODocTypeDesc"].ToString();
                     var clientSAPId = reader.IsDBNull(reader.GetOrdinal("ClientSAPId")) ? 0 : Convert.ToInt32(reader["ClientSAPId"]);
-
                     var recordId = $"ID={poDocTypeId}";
-
                     // Validate required fields
                     if (string.IsNullOrWhiteSpace(poDocTypeCode))
                     {
                         migrationLogger.LogSkipped("PODocTypeCode is null or empty", recordId);
+                        skippedRecords.Add((recordId, "PODocTypeCode is null or empty"));
                         continue;
                     }
-
                     if (string.IsNullOrWhiteSpace(poDocTypeDesc))
                     {
                         migrationLogger.LogSkipped("PODocTypeDesc is null or empty", recordId);
+                        skippedRecords.Add((recordId, "PODocTypeDesc is null or empty"));
                         continue;
                     }
-
                     pgCmd.Parameters.Clear();
                     pgCmd.Parameters.AddWithValue("@po_doc_type_id", poDocTypeId);
                     pgCmd.Parameters.AddWithValue("@po_doc_type_code", poDocTypeCode ?? "");
@@ -116,18 +116,24 @@ public class PODocTypeMasterMigration : MigrationService
                     pgCmd.Parameters.AddWithValue("@is_deleted", false);
                     pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value);
                     pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value);
-                    
                     int result = await pgCmd.ExecuteNonQueryAsync();
                     if (result > 0)
                     {
                         migrationLogger.LogInserted(recordId);
+                        insertedRecords++;
+                    }
+                    else
+                    {
+                        skippedRecords.Add((recordId, "Insert returned 0 rows"));
+                        migrationLogger.LogSkipped("Insert returned 0 rows", recordId);
                     }
                 }
                 catch (Exception recordEx)
                 {
                     var poDocTypeId = reader.IsDBNull(reader.GetOrdinal("PODocTypeId")) ? 0 : Convert.ToInt32(reader["PODocTypeId"]);
-                    migrationLogger.LogError($"Error processing record: {recordEx.Message}", $"ID={poDocTypeId}", recordEx);
-                    throw new Exception($"Error processing record ID={poDocTypeId} in PO Document Type Master Migration: {recordEx.Message}", recordEx);
+                    var errorId = $"ID={poDocTypeId}";
+                    migrationLogger.LogError($"Error processing record: {recordEx.Message}", errorId, recordEx);
+                    skippedRecords.Add((errorId, recordEx.Message));
                 }
             }
         }
@@ -151,10 +157,19 @@ public class PODocTypeMasterMigration : MigrationService
                 throw new Exception($"Unexpected error during PO Document Type Master Migration at record {migrationLogger.ProcessedCount}: {readerEx.Message}", readerEx);
             }
         }
-        
         var summary = migrationLogger.GetSummary();
-        _logger.LogInformation($"PO Document Type Master Migration completed. Inserted: {summary.TotalInserted}, Skipped: {summary.TotalSkipped}, Errors: {summary.TotalErrors}");
-        
-        return summary.TotalInserted;
+        _logger.LogInformation($"PO Document Type Master Migration completed. Total: {totalRecords}, Inserted: {insertedRecords}, Skipped: {skippedRecords.Count}, Errors: {summary.TotalErrors}");
+        // Export migration stats to Excel
+        string outputPath = "po_doc_type_master_migration_stats.xlsx";
+        MigrationStatsExporter.ExportToExcel(
+            outputPath,
+            totalRecords,
+            insertedRecords,
+            skippedRecords.Count,
+            _logger,
+            skippedRecords
+        );
+        _logger.LogInformation($"Migration stats exported to migration_outputs/{outputPath}");
+        return insertedRecords;
     }
 }

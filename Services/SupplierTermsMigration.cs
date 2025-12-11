@@ -13,6 +13,9 @@ public class SupplierTermsMigration : MigrationService
     private const int BATCH_SIZE = 1000;
     private readonly ILogger<SupplierTermsMigration> _logger;
     private readonly MigrationLogger migrationLogger;
+    
+    // Track skipped records for detailed reporting
+    private List<(string RecordId, string Reason)> _skippedRecords = new List<(string, string)>();
 
     protected override string SelectQuery => @"
         SELECT
@@ -170,6 +173,7 @@ public class SupplierTermsMigration : MigrationService
                 if (vendorDeviationMstId == DBNull.Value)
                 {
                     migrationLogger.LogSkipped("NULL", "VENDORDEVIATIONMSTID is NULL");
+                    _skippedRecords.Add((vendorDeviationMstId.ToString(), "VENDORDEVIATIONMSTID is NULL"));
                     continue;
                 }
 
@@ -179,6 +183,7 @@ public class SupplierTermsMigration : MigrationService
                 if (processedIds.Contains(vendorDeviationMstIdValue))
                 {
                     migrationLogger.LogSkipped("Duplicate record", vendorDeviationMstIdValue.ToString());
+                    _skippedRecords.Add((vendorDeviationMstIdValue.ToString(), "Duplicate record"));
                     continue;
                 }
 
@@ -189,6 +194,7 @@ public class SupplierTermsMigration : MigrationService
                     if (!validEventIds.Contains(eventIdValue))
                     {
                         migrationLogger.LogSkipped($"event_id={eventIdValue} not found in event_master", vendorDeviationMstIdValue.ToString());
+                        _skippedRecords.Add((vendorDeviationMstIdValue.ToString(), $"event_id={eventIdValue} not found in event_master"));
                         continue;
                     }
                 }
@@ -200,6 +206,7 @@ public class SupplierTermsMigration : MigrationService
                     if (!validSupplierIds.Contains(vendorIdValue))
                     {
                         migrationLogger.LogSkipped($"supplier_id={vendorIdValue} not found in supplier_master", vendorDeviationMstIdValue.ToString());
+                        _skippedRecords.Add((vendorDeviationMstIdValue.ToString(), $"supplier_id={vendorIdValue} not found in supplier_master"));
                         continue;
                     }
                 }
@@ -208,6 +215,7 @@ public class SupplierTermsMigration : MigrationService
                 if (clauseEventWiseId == DBNull.Value)
                 {
                     migrationLogger.LogSkipped("user_term_id is NULL", vendorDeviationMstIdValue.ToString());
+                    _skippedRecords.Add((vendorDeviationMstIdValue.ToString(), "user_term_id is NULL"));
                     continue;
                 }
 
@@ -216,6 +224,7 @@ public class SupplierTermsMigration : MigrationService
                 if (!validUserTermIds.Contains(clauseEventWiseIdValue))
                 {
                     migrationLogger.LogSkipped($"user_term_id={clauseEventWiseIdValue} not found in user_term", vendorDeviationMstIdValue.ToString());
+                    _skippedRecords.Add((vendorDeviationMstIdValue.ToString(), $"user_term_id={clauseEventWiseIdValue} not found in user_term"));
                     continue;
                 }
 
@@ -273,6 +282,16 @@ public class SupplierTermsMigration : MigrationService
             // Log summary
             var summary = migrationLogger.GetSummary();
             _logger.LogInformation($"Supplier Terms migration completed. {summary}");
+
+            // Export migration statistics with skipped record details
+            MigrationStatsExporter.ExportToExcel(
+                "SupplierTerms_migration_stats.xlsx",
+                totalRecords,
+                migratedRecords,
+                totalRecords - migratedRecords,
+                _logger,
+                _skippedRecords
+            );
 
             return migratedRecords;
         }

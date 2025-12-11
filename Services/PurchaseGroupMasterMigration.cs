@@ -84,7 +84,19 @@ public class PurchaseGroupMasterMigration : MigrationService
         
         var summary = migrationLogger.GetSummary();
         _logger.LogInformation($"Purchase Group Master Migration completed. Inserted: {summary.TotalInserted}, Skipped: {summary.TotalSkipped}");
-        
+
+        // Export migration stats to Excel
+        try
+        {
+            var outputPath = $"PurchaseGroupMasterMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+            var skippedRecordsList = migrationLogger.GetSkippedRecords().Select(x => (x.RecordIdentifier, x.Message)).ToList();
+            MigrationStatsExporter.ExportToExcel(outputPath, summary.TotalProcessed, summary.TotalInserted, summary.TotalSkipped, _logger, skippedRecordsList);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"Failed to export migration stats: {ex.Message}");
+        }
+
         return summary.TotalInserted;
     }
 }

@@ -112,13 +112,12 @@ ON CONFLICT (technical_approval_score_id) DO UPDATE SET
     {
         _migrationLogger = new MigrationLogger(_logger, "technical_approval_score_history");
         _migrationLogger.LogInfo("Starting migration");
-
         _logger.LogInformation("Starting TechnicalApprovalScoreHistory migration...");
-        
         int insertedCount = 0;
         int skippedCount = 0;
         int batchNumber = 0;
         var batch = new List<Dictionary<string, object>>();
+        var skippedDetails = new List<(string, string)>(); // (record id, reason)
 
         // Load valid event IDs, event_item IDs, and supplier IDs
         var validEventIds = await LoadValidEventIdsAsync(pgConn, transaction);
@@ -154,8 +153,10 @@ ON CONFLICT (technical_approval_score_id) DO UPDATE SET
             // Validate required keys
             if (techApprovalScoreId == DBNull.Value)
             {
-                _logger.LogWarning($"Skipping row: TechApprovalScoreId is NULL.");
+                var reason = "TechApprovalScoreId is NULL.";
+                _logger.LogWarning($"Skipping row: {reason}");
                 skippedCount++;
+                skippedDetails.Add(("TechApprovalScoreId:NULL", reason));
                 continue;
             }
 
@@ -165,8 +166,10 @@ ON CONFLICT (technical_approval_score_id) DO UPDATE SET
                 int eventIdValue = Convert.ToInt32(eventId);
                 if (!validEventIds.Contains(eventIdValue))
                 {
-                    _logger.LogWarning($"Skipping TechApprovalScoreId {techApprovalScoreId}: event_id {eventIdValue} not found in event_master.");
+                    var reason = $"event_id {eventIdValue} not found in event_master.";
+                    _logger.LogWarning($"Skipping TechApprovalScoreId {techApprovalScoreId}: {reason}");
                     skippedCount++;
+                    skippedDetails.Add(($"TechApprovalScoreId:{techApprovalScoreId}", reason));
                     continue;
                 }
             }
@@ -177,8 +180,10 @@ ON CONFLICT (technical_approval_score_id) DO UPDATE SET
                 int eventItemIdValue = Convert.ToInt32(pbId);
                 if (!validEventItemIds.Contains(eventItemIdValue))
                 {
-                    _logger.LogWarning($"Skipping TechApprovalScoreId {techApprovalScoreId}: event_item_id (PBID) {eventItemIdValue} not found in event_items.");
+                    var reason = $"event_item_id (PBID) {eventItemIdValue} not found in event_items.";
+                    _logger.LogWarning($"Skipping TechApprovalScoreId {techApprovalScoreId}: {reason}");
                     skippedCount++;
+                    skippedDetails.Add(($"TechApprovalScoreId:{techApprovalScoreId}", reason));
                     continue;
                 }
             }
@@ -189,8 +194,10 @@ ON CONFLICT (technical_approval_score_id) DO UPDATE SET
                 int supplierIdValue = Convert.ToInt32(vendorId);
                 if (!validSupplierIds.Contains(supplierIdValue))
                 {
-                    _logger.LogWarning($"Skipping TechApprovalScoreId {techApprovalScoreId}: supplier_id (VendorId) {supplierIdValue} not found in supplier_master.");
+                    var reason = $"supplier_id (VendorId) {supplierIdValue} not found in supplier_master.";
+                    _logger.LogWarning($"Skipping TechApprovalScoreId {techApprovalScoreId}: {reason}");
                     skippedCount++;
+                    skippedDetails.Add(($"TechApprovalScoreId:{techApprovalScoreId}", reason));
                     continue;
                 }
             }
@@ -231,6 +238,15 @@ ON CONFLICT (technical_approval_score_id) DO UPDATE SET
         }
 
         _logger.LogInformation($"TechnicalApprovalScoreHistory migration completed. Inserted: {insertedCount}, Skipped: {skippedCount}");
+        // Export migration stats to Excel
+        MigrationStatsExporter.ExportToExcel(
+            "migration_outputs/TechnicalApprovalScoreHistoryMigration_Stats.xlsx",
+            insertedCount + skippedCount,
+            insertedCount,
+            skippedCount,
+            _logger,
+            skippedDetails
+        );
         return insertedCount;
     }
 

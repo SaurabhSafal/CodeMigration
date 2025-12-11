@@ -92,6 +92,7 @@ public class TypeOfCategoryMasterMigration : MigrationService
         int insertedCount = 0;
         int skippedCount = 0;
         int totalReadCount = 0;
+        var skippedRecordsList = new List<(string RecordId, string Reason)>();
 
         while (await reader.ReadAsync())
         {
@@ -100,15 +101,12 @@ public class TypeOfCategoryMasterMigration : MigrationService
             {
                 Console.WriteLine($"✓ Found records! Processing...");
             }
-            
             if (totalReadCount % 10 == 0)
             {
                 Console.WriteLine($"📊 Processed {totalReadCount} records so far... (Inserted: {insertedCount}, Skipped: {skippedCount})");
             }
-
             var sourceId = reader["id"];
             var categoryName = reader["CategoryType"];
-            
             // For each source row, insert one row per company
             foreach (var companyId in companyIds)
             {
@@ -163,20 +161,26 @@ public class TypeOfCategoryMasterMigration : MigrationService
                     {
                         // ON CONFLICT DO NOTHING - record already exists
                         skippedCount++;
-                        Console.WriteLine($"⚠️  Skipping duplicate: type_of_category_id={sourceId}, company_id={companyId}");
+                        string reason = $"Duplicate: type_of_category_id={sourceId}, company_id={companyId}";
+                        skippedRecordsList.Add((sourceId?.ToString() ?? "", reason));
+                        Console.WriteLine($"⚠️  Skipping duplicate: {reason}");
                     }
                 }
                 catch (PostgresException pgEx)
                 {
                     skippedCount++;
-                    Console.WriteLine($"❌ PostgreSQL error for id={sourceId}, company={companyId}: {pgEx.MessageText}");
+                    string reason = $"PostgreSQL error for id={sourceId}, company={companyId}: {pgEx.MessageText}";
+                    skippedRecordsList.Add((sourceId?.ToString() ?? "", reason));
+                    Console.WriteLine($"❌ {reason}");
                     if (pgEx.Detail != null) Console.WriteLine($"   Detail: {pgEx.Detail}");
                     continue;
                 }
                 catch (Exception ex)
                 {
                     skippedCount++;
-                    Console.WriteLine($"❌ Error migrating id={sourceId}, company={companyId}: {ex.Message}");
+                    string reason = $"Error migrating id={sourceId}, company={companyId}: {ex.Message}";
+                    skippedRecordsList.Add((sourceId?.ToString() ?? "", reason));
+                    Console.WriteLine($"❌ {reason}");
                     continue;
                 }
             }
@@ -186,12 +190,22 @@ public class TypeOfCategoryMasterMigration : MigrationService
         Console.WriteLine($"   Total source records read: {totalReadCount}");
         Console.WriteLine($"   ✓ Successfully inserted rows: {insertedCount}");
         Console.WriteLine($"   ❌ Skipped (errors/duplicates): {skippedCount}");
-        
         if (totalReadCount == 0)
         {
             Console.WriteLine($"\n⚠️  WARNING: No records found in TBL_TypeOfCategory table!");
         }
-        
+        // Export migration statistics to Excel
+        string outputPath = System.IO.Path.Combine("migration_outputs", $"TypeOfCategoryMasterMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx");
+        MigrationStatsExporter.ExportToExcel(
+            outputPath,
+            totalReadCount * companyIds.Count,
+            insertedCount,
+            skippedCount,
+            _logger,
+            skippedRecordsList
+        );
+        Console.WriteLine($"Migration statistics exported to {outputPath}");
+
         // Reset the identity sequence to the max ID to avoid conflicts with future inserts
         if (insertedCount > 0)
         {

@@ -55,6 +55,7 @@ namespace DataMigration.Services
 
             var migratedRecords = 0;
             var skippedRecords = 0;
+            var skippedDetails = new List<(string, string)>(); // (record id, reason)
 
             try
             {
@@ -189,8 +190,10 @@ namespace DataMigration.Services
                         // Validate event_id exists in event_master (FK constraint)
                         if (record.EVENT_ID.HasValue && !validEventIds.Contains(record.EVENT_ID.Value))
                         {
-                            _logger.LogWarning($"Skipping PB_SupplerChargesId {record.PB_SupplerChargesId}: event_id={record.EVENT_ID} not found in event_master");
+                            var reason = $"event_id={record.EVENT_ID} not found in event_master";
+                            _logger.LogWarning($"Skipping PB_SupplerChargesId {record.PB_SupplerChargesId}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"PB_SupplerChargesId:{record.PB_SupplerChargesId}", reason));
                             continue;
                         }
 
@@ -207,23 +210,29 @@ namespace DataMigration.Services
                             else
                             {
                                 // Skip record if PB_ChargesId doesn't exist in price_bid_charges_master
-                                _logger.LogWarning($"Skipping PB_SupplerChargesId {record.PB_SupplerChargesId}: PB_ChargesId={chargesId} not found in price_bid_charges_master (looked up from PB_BuyerChargesId={record.PB_BuyerChargesId})");
+                                var reason = $"PB_ChargesId={chargesId} not found in price_bid_charges_master (looked up from PB_BuyerChargesId={record.PB_BuyerChargesId})";
+                                _logger.LogWarning($"Skipping PB_SupplerChargesId {record.PB_SupplerChargesId}: {reason}");
                                 skippedRecords++;
+                                skippedDetails.Add(($"PB_SupplerChargesId:{record.PB_SupplerChargesId}", reason));
                                 continue;
                             }
                         }
                         else if (record.PB_BuyerChargesId.HasValue)
                         {
                             // Skip record if PB_BuyerChargesId cannot be found in TBL_PB_BUYEROTHERCHARGES
-                            _logger.LogWarning($"Skipping PB_SupplerChargesId {record.PB_SupplerChargesId}: PB_BuyerChargesId={record.PB_BuyerChargesId} not found in TBL_PB_BUYEROTHERCHARGES");
+                            var reason = $"PB_BuyerChargesId={record.PB_BuyerChargesId} not found in TBL_PB_BUYEROTHERCHARGES";
+                            _logger.LogWarning($"Skipping PB_SupplerChargesId {record.PB_SupplerChargesId}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"PB_SupplerChargesId:{record.PB_SupplerChargesId}", reason));
                             continue;
                         }
                         else
                         {
                             // Skip record if PB_BuyerChargesId is null
-                            _logger.LogWarning($"Skipping PB_SupplerChargesId {record.PB_SupplerChargesId}: PB_BuyerChargesId is null");
+                            var reason = "PB_BuyerChargesId is null";
+                            _logger.LogWarning($"Skipping PB_SupplerChargesId {record.PB_SupplerChargesId}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"PB_SupplerChargesId:{record.PB_SupplerChargesId}", reason));
                             continue;
                         }
 
@@ -236,15 +245,19 @@ namespace DataMigration.Services
                         else if (record.GSTPer.HasValue)
                         {
                             // Skip record if tax_master_id cannot be found (NOT NULL constraint)
-                            _logger.LogWarning($"Skipping PB_SupplerChargesId {record.PB_SupplerChargesId}: tax_master_id not found for GSTPer={record.GSTPer}");
+                            var reason = $"tax_master_id not found for GSTPer={record.GSTPer}";
+                            _logger.LogWarning($"Skipping PB_SupplerChargesId {record.PB_SupplerChargesId}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"PB_SupplerChargesId:{record.PB_SupplerChargesId}", reason));
                             continue;
                         }
                         // If GSTPer is null but we have tax amounts, skip the record
                         else if (record.GSTAmount.HasValue && record.GSTAmount.Value != 0)
                         {
-                            _logger.LogWarning($"Skipping PB_SupplerChargesId {record.PB_SupplerChargesId}: GSTPer is null but GSTAmount is {record.GSTAmount}");
+                            var reason = $"GSTPer is null but GSTAmount is {record.GSTAmount}";
+                            _logger.LogWarning($"Skipping PB_SupplerChargesId {record.PB_SupplerChargesId}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"PB_SupplerChargesId:{record.PB_SupplerChargesId}", reason));
                             continue;
                         }
 
@@ -258,8 +271,10 @@ namespace DataMigration.Services
                         // Final safety check for NOT NULL constraints before inserting
                         if (!priceBidChargesId.HasValue)
                         {
-                            _logger.LogWarning($"Skipping PB_SupplerChargesId {record.PB_SupplerChargesId}: price_bid_charges_id is null after lookup");
+                            var reason = "price_bid_charges_id is null after lookup";
+                            _logger.LogWarning($"Skipping PB_SupplerChargesId {record.PB_SupplerChargesId}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"PB_SupplerChargesId:{record.PB_SupplerChargesId}", reason));
                             continue;
                         }
 
@@ -292,8 +307,10 @@ namespace DataMigration.Services
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError($"PB_SupplerChargesId {record.PB_SupplerChargesId}: {ex.Message}");
+                        var reason = ex.Message;
+                        _logger.LogError($"PB_SupplerChargesId {record.PB_SupplerChargesId}: {reason}");
                         skippedRecords++;
+                        skippedDetails.Add(($"PB_SupplerChargesId:{record.PB_SupplerChargesId}", reason));
                     }
                 }
 
@@ -304,6 +321,17 @@ namespace DataMigration.Services
                 }
 
                 _logger.LogInformation($"Migration completed. Migrated: {migratedRecords}, Skipped: {skippedRecords}");
+
+                // Export migration stats to Excel
+                var totalRecords = migratedRecords + skippedRecords;
+                MigrationStatsExporter.ExportToExcel(
+                    "SupplierPriceBidLotChargesMigration_Stats.xlsx",
+                    totalRecords,
+                    migratedRecords,
+                    skippedRecords,
+                    _logger,
+                    skippedDetails
+                );
             }
             catch (Exception ex)
             {
@@ -393,6 +421,7 @@ namespace DataMigration.Services
 
             var upsertedRecords = 0;
             var skippedRecords = 0;
+            var skippedDetails = new List<(string, string)>(); // (record id, reason)
 
             try
             {
@@ -521,8 +550,10 @@ namespace DataMigration.Services
                         // Validate event_id
                         if (record.EVENT_ID.HasValue && !validEventIds.Contains(record.EVENT_ID.Value))
                         {
-                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: event_id={record.EVENT_ID} not found");
+                            var reason = $"event_id={record.EVENT_ID} not found";
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"UPDATEID:{record.UPDATEID}", reason));
                             continue;
                         }
 
@@ -537,21 +568,27 @@ namespace DataMigration.Services
                             }
                             else
                             {
-                                _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: price_bid_charges_id={chargesId} not found");
+                                var reason = $"price_bid_charges_id={chargesId} not found";
+                                _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: {reason}");
                                 skippedRecords++;
+                                skippedDetails.Add(($"UPDATEID:{record.UPDATEID}", reason));
                                 continue;
                             }
                         }
                         else if (record.PB_BuyerChargesId.HasValue)
                         {
-                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: PB_BuyerChargesId={record.PB_BuyerChargesId} not found in lookup");
+                            var reason = $"PB_BuyerChargesId={record.PB_BuyerChargesId} not found in lookup";
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"UPDATEID:{record.UPDATEID}", reason));
                             continue;
                         }
                         else
                         {
-                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: PB_BuyerChargesId is null");
+                            var reason = "PB_BuyerChargesId is null";
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"UPDATEID:{record.UPDATEID}", reason));
                             continue;
                         }
 
@@ -563,8 +600,10 @@ namespace DataMigration.Services
                         }
                         else if (record.GSTPer.HasValue)
                         {
-                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: tax_master_id not found for GSTPer={record.GSTPer}");
+                            var reason = $"tax_master_id not found for GSTPer={record.GSTPer}";
+                            _logger.LogWarning($"Skipping UPDATEID {record.UPDATEID}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"UPDATEID:{record.UPDATEID}", reason));
                             continue;
                         }
 
@@ -653,12 +692,25 @@ namespace DataMigration.Services
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError($"UPDATEID {record.UPDATEID}: {ex.Message}");
+                        var reason = ex.Message;
+                        _logger.LogError($"UPDATEID {record.UPDATEID}: {reason}");
                         skippedRecords++;
+                        skippedDetails.Add(($"UPDATEID:{record.UPDATEID}", reason));
                     }
                 }
 
                 _logger.LogInformation($"UPSERT completed. Upserted: {upsertedRecords}, Skipped: {skippedRecords}");
+
+                // Export migration stats to Excel
+                var totalRecords = upsertedRecords + skippedRecords;
+                MigrationStatsExporter.ExportToExcel(
+                    "SupplierPriceBidLotChargesUpsert_Stats.xlsx",
+                    totalRecords,
+                    upsertedRecords,
+                    skippedRecords,
+                    _logger,
+                    skippedDetails
+                );
             }
             catch (Exception ex)
             {

@@ -116,6 +116,7 @@ public class UserPriceBidLotChargesMigration : MigrationService
         int totalRecords = 0;
         int migratedRecords = 0;
         int skippedRecords = 0;
+        var skippedRecordsList = new List<(string RecordId, string Reason)>();
 
         try
         {
@@ -147,7 +148,9 @@ public class UserPriceBidLotChargesMigration : MigrationService
                 if (pbBuyerChargesId == DBNull.Value)
                 {
                     skippedRecords++;
-                    _logger.LogWarning("Skipping record - PB_BuyerChargesId is NULL");
+                    string reason = "PB_BuyerChargesId is NULL";
+                    _logger.LogWarning($"Skipping record - {reason}");
+                    skippedRecordsList.Add(("", reason));
                     continue;
                 }
 
@@ -157,6 +160,8 @@ public class UserPriceBidLotChargesMigration : MigrationService
                 if (processedIds.Contains(pbBuyerChargesIdValue))
                 {
                     skippedRecords++;
+                    string reason = $"Duplicate PB_BuyerChargesId {pbBuyerChargesIdValue}";
+                    skippedRecordsList.Add((pbBuyerChargesIdValue.ToString(), reason));
                     continue;
                 }
 
@@ -167,7 +172,9 @@ public class UserPriceBidLotChargesMigration : MigrationService
                     if (!validEventIds.Contains(eventIdValue))
                     {
                         skippedRecords++;
-                        _logger.LogWarning($"Skipping PB_BuyerChargesId {pbBuyerChargesIdValue} - Invalid event_id: {eventIdValue}");
+                        string reason = $"Invalid event_id: {eventIdValue}";
+                        _logger.LogWarning($"Skipping PB_BuyerChargesId {pbBuyerChargesIdValue} - {reason}");
+                        skippedRecordsList.Add((pbBuyerChargesIdValue.ToString(), reason));
                         continue;
                     }
                 }
@@ -179,7 +186,9 @@ public class UserPriceBidLotChargesMigration : MigrationService
                     if (!validPriceBidChargesIds.Contains(pbChargesIdValue))
                     {
                         skippedRecords++;
-                        _logger.LogWarning($"Skipping PB_BuyerChargesId {pbBuyerChargesIdValue} - Invalid price_bid_charges_id: {pbChargesIdValue}");
+                        string reason = $"Invalid price_bid_charges_id: {pbChargesIdValue}";
+                        _logger.LogWarning($"Skipping PB_BuyerChargesId {pbBuyerChargesIdValue} - {reason}");
+                        skippedRecordsList.Add((pbBuyerChargesIdValue.ToString(), reason));
                         continue;
                     }
                 }
@@ -216,6 +225,18 @@ public class UserPriceBidLotChargesMigration : MigrationService
                 int batchMigrated = await InsertBatchAsync(batch, pgConn, transaction);
                 migratedRecords += batchMigrated;
             }
+
+            // Export migration statistics to Excel
+            string outputPath = System.IO.Path.Combine("migration_outputs", $"UserPriceBidLotChargesMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx");
+            MigrationStatsExporter.ExportToExcel(
+                outputPath,
+                totalRecords,
+                migratedRecords,
+                skippedRecords,
+                _logger,
+                skippedRecordsList
+            );
+            _logger.LogInformation($"Migration statistics exported to {outputPath}");
 
             _logger.LogInformation($"User Price Bid Lot Charges migration completed. Total: {totalRecords}, Migrated: {migratedRecords}, Skipped: {skippedRecords}");
 

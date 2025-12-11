@@ -208,6 +208,9 @@ public class SupplierGroupMasterMigration : MigrationService
         Stopwatch stopwatch, 
         NpgsqlTransaction? transaction = null)
     {
+        _migrationLogger = new MigrationLogger(_logger, "supplier_groupmaster");
+        _migrationLogger.LogInfo("Starting migration");
+
         var insertedCount = 0;
         var processedCount = 0;
         var skippedCount = 0;
@@ -234,10 +237,12 @@ public class SupplierGroupMasterMigration : MigrationService
                     if (record != null)
                     {
                         batch.Add(record);
+                        _migrationLogger?.LogInserted($"VendorGroupId={record.SupplierGroupMasterId}");
                     }
                     else
                     {
                         skippedCount++;
+                        _migrationLogger?.LogSkipped("Record is null", $"Record={processedCount}");
                     }
 
                     // Process batch when it reaches the batch size or it's the last record
@@ -265,19 +270,31 @@ public class SupplierGroupMasterMigration : MigrationService
                 }
                 catch (Exception recordEx)
                 {
+                    skippedCount++;
+                    _migrationLogger?.LogSkipped(recordEx.Message, $"Record={processedCount}");
                     progress.ReportError($"Error processing record {processedCount}: {recordEx.Message}", processedCount);
-                    throw new Exception($"Error processing record {processedCount} in SupplierGroupMaster Migration: {recordEx.Message}", recordEx);
                 }
             }
         }
         catch (Exception ex)
         {
             progress.ReportError($"Migration failed after processing {processedCount} records: {ex.Message}", processedCount);
-            throw;
         }
 
         stopwatch.Stop();
         progress.ReportCompleted(processedCount, insertedCount, stopwatch.Elapsed);
+
+        // Export migration stats to Excel
+        try
+        {
+            var outputPath = $"SupplierGroupMasterMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+            var skippedRecordsList = _migrationLogger?.GetSkippedRecords().Select(x => (x.RecordIdentifier, x.Message)).ToList() ?? new List<(string, string)>();
+            MigrationStatsExporter.ExportToExcel(outputPath, totalRecords, insertedCount, skippedCount, _logger, skippedRecordsList);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"Failed to export migration stats: {ex.Message}");
+        }
         
         return insertedCount;
     }

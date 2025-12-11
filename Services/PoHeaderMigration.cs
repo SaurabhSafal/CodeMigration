@@ -63,7 +63,7 @@ namespace DataMigration.Services
             }
 
             var migratedRecords = 0;
-            var skippedRecords = 0;
+            var skippedRecords = new List<(string RecordId, string Reason)>();
 
             try
             {
@@ -219,7 +219,7 @@ namespace DataMigration.Services
                     catch (Exception ex)
                     {
                         _logger.LogError($"POID {record.POID}: {ex.Message}");
-                        skippedRecords++;
+                        skippedRecords.Add(($"POID={record.POID}", ex.Message));
                     }
                 }
 
@@ -229,7 +229,18 @@ namespace DataMigration.Services
                     await ExecuteInsertBatch(pgConnection, insertBatch);
                 }
 
-                _logger.LogInformation($"Migration completed. Migrated: {migratedRecords}, Skipped: {skippedRecords}");
+                _logger.LogInformation($"Migration completed. Migrated: {migratedRecords}, Skipped: {skippedRecords.Count}");
+                // Export migration stats to Excel
+                string outputPath = "po_header_migration_stats.xlsx";
+                MigrationStatsExporter.ExportToExcel(
+                    outputPath,
+                    sourceData.Count,
+                    migratedRecords,
+                    skippedRecords.Count,
+                    _logger,
+                    skippedRecords
+                );
+                _logger.LogInformation($"Migration stats exported to migration_outputs/{outputPath}");
             }
             catch (Exception ex)
             {

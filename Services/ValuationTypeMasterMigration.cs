@@ -86,6 +86,7 @@ public class ValuationTypeMasterMigration : MigrationService
         int insertedCount = 0;
         int skippedCount = 0;
         int totalReadCount = 0;
+        var skippedRecordsList = new List<(string RecordId, string Reason)>();
 
         while (await reader.ReadAsync())
         {
@@ -94,16 +95,13 @@ public class ValuationTypeMasterMigration : MigrationService
             {
                 Console.WriteLine($"✓ Found records! Processing...");
             }
-            
             if (totalReadCount % 10 == 0)
             {
                 Console.WriteLine($"📊 Processed {totalReadCount} records so far... (Inserted: {insertedCount}, Skipped: {skippedCount})");
             }
-            
             try
             {
                 pgCmd.Parameters.Clear();
-
                 pgCmd.Parameters.AddWithValue("@valuation_type_id", reader["ValuationID"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@valuation_type_name", reader["ValuationType"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@company_id", reader["ClientSAPID"] ?? DBNull.Value);
@@ -114,14 +112,16 @@ public class ValuationTypeMasterMigration : MigrationService
                 pgCmd.Parameters.AddWithValue("@is_deleted", false);
                 pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value);
-
                 int result = await pgCmd.ExecuteNonQueryAsync();
                 if (result > 0) insertedCount++;
             }
             catch (Exception ex)
             {
                 skippedCount++;
-                Console.WriteLine($"❌ Error migrating ValuationID {reader["ValuationID"]}: {ex.Message}");
+                string recordId = reader["ValuationID"]?.ToString() ?? "";
+                string reason = $"Error: {ex.Message}";
+                skippedRecordsList.Add((recordId, reason));
+                Console.WriteLine($"❌ Error migrating ValuationID {recordId}: {ex.Message}");
                 Console.WriteLine($"   Stack Trace: {ex.StackTrace}");
                 if (ex.InnerException != null)
                 {
@@ -134,13 +134,22 @@ public class ValuationTypeMasterMigration : MigrationService
         Console.WriteLine($"   Total records read: {totalReadCount}");
         Console.WriteLine($"   ✓ Successfully inserted: {insertedCount}");
         Console.WriteLine($"   ❌ Skipped (errors): {skippedCount}");
-        
         if (totalReadCount == 0)
         {
             Console.WriteLine($"\n⚠️  WARNING: No records found in tbl_ValuationMaster table!");
         }
+        // Export migration statistics to Excel
+        string outputPath = System.IO.Path.Combine("migration_outputs", $"ValuationTypeMasterMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx");
+        MigrationStatsExporter.ExportToExcel(
+            outputPath,
+            totalReadCount,
+            insertedCount,
+            skippedCount,
+            _logger,
+            skippedRecordsList
+        );
+        Console.WriteLine($"Migration statistics exported to {outputPath}");
 
         return insertedCount;
     }
 }
-    

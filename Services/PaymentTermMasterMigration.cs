@@ -11,6 +11,7 @@ public class PaymentTermMasterMigration : MigrationService
 {
     private readonly ILogger<PaymentTermMasterMigration> _logger;
     private readonly MigrationLogger migrationLogger;
+    private readonly List<(string RecordId, string Reason)> _skippedRecords = new();
 
     protected override string SelectQuery => "SELECT PTID, PTCode, PTDescription, ClientSAPId FROM TBL_PAYMENTTERMMASTER";
     protected override string InsertQuery => @"INSERT INTO payment_term_master (payment_term_id, payment_term_code, payment_term_name, company_id, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) 
@@ -51,40 +52,71 @@ public class PaymentTermMasterMigration : MigrationService
     {
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await sqlCmd.ExecuteReaderAsync();
-
         using var pgCmd = new NpgsqlCommand(InsertQuery, pgConn);
         if (transaction != null)
         {
             pgCmd.Transaction = transaction;
         }
 
+        int totalRecords = 0;
+        int insertedRecords = 0;
+        var skippedRecords = new List<(string RecordId, string Reason)>();
+        var insertedRecordIds = new List<string>();
+
         while (await reader.ReadAsync())
         {
+            totalRecords++;
             var ptid = reader["PTID"];
             var recordId = $"ID={ptid}";
-            
-            pgCmd.Parameters.Clear();
-            pgCmd.Parameters.AddWithValue("@payment_term_id", ptid);
-            pgCmd.Parameters.AddWithValue("@payment_term_code", reader["PTCode"]);
-            pgCmd.Parameters.AddWithValue("@payment_term_name", reader["PTDescription"]);
-            pgCmd.Parameters.AddWithValue("@company_id", reader["ClientSAPId"]);
-            pgCmd.Parameters.AddWithValue("@created_by", 0);
-            pgCmd.Parameters.AddWithValue("@created_date", DateTime.UtcNow);
-            pgCmd.Parameters.AddWithValue("@modified_by", DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@modified_date", DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@is_deleted", false);
-            pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value);
-            int result = await pgCmd.ExecuteNonQueryAsync();
-            if (result > 0)
+            try
             {
-                migrationLogger.LogInserted(recordId);
+                pgCmd.Parameters.Clear();
+                pgCmd.Parameters.AddWithValue("@payment_term_id", ptid);
+                pgCmd.Parameters.AddWithValue("@payment_term_code", reader["PTCode"]);
+                pgCmd.Parameters.AddWithValue("@payment_term_name", reader["PTDescription"]);
+                pgCmd.Parameters.AddWithValue("@company_id", reader["ClientSAPId"]);
+                pgCmd.Parameters.AddWithValue("@created_by", 0);
+                pgCmd.Parameters.AddWithValue("@created_date", DateTime.UtcNow);
+                pgCmd.Parameters.AddWithValue("@modified_by", DBNull.Value);
+                pgCmd.Parameters.AddWithValue("@modified_date", DBNull.Value);
+                pgCmd.Parameters.AddWithValue("@is_deleted", false);
+                pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value);
+                pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value);
+                int result = await pgCmd.ExecuteNonQueryAsync();
+                if (result > 0)
+                {
+                    migrationLogger.LogInserted(recordId);
+                    insertedRecords++;
+                    insertedRecordIds.Add(recordId);
+                }
+                else
+                {
+                    skippedRecords.Add((recordId, "Insert returned 0 rows"));
+                    migrationLogger.LogSkipped(recordId, "Insert returned 0 rows");
+                }
+            }
+            catch (Exception ex)
+            {
+                skippedRecords.Add((recordId, ex.Message));
+                migrationLogger.LogSkipped(recordId, ex.Message);
             }
         }
-        
+
         var summary = migrationLogger.GetSummary();
-        _logger.LogInformation($"Payment Term Master Migration completed. Inserted: {summary.TotalInserted}, Skipped: {summary.TotalSkipped}");
-        
-        return summary.TotalInserted;
+        _logger.LogInformation($"Payment Term Master Migration completed. Total: {totalRecords}, Inserted: {insertedRecords}, Skipped: {skippedRecords.Count}");
+
+        // Export migration stats to Excel
+        string outputPath = "payment_term_master_migration_stats.xlsx";
+        MigrationStatsExporter.ExportToExcel(
+            outputPath,
+            totalRecords,
+            insertedRecords,
+            skippedRecords.Count,
+            _logger,
+            skippedRecords
+        );
+        _logger.LogInformation($"Migration stats exported to migration_outputs/{outputPath}");
+
+        return insertedRecords;
     }
 }

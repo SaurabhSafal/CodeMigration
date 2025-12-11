@@ -141,6 +141,7 @@ namespace DataMigration.Services
                         // Validate event_id (REQUIRED - NOT NULL constraint)
                         if (!record.EVENTID.HasValue)
                         {
+                            _migrationLogger?.LogSkipped("EVENTID is null", $"SUPATTACHEMNTID={record.SUPATTACHEMNTID}");
                             _logger.LogWarning($"Skipping SUPATTACHEMNTID {record.SUPATTACHEMNTID}: EVENTID is null");
                             skippedRecords++;
                             continue;
@@ -148,6 +149,7 @@ namespace DataMigration.Services
 
                         if (!validEventIds.Contains(record.EVENTID.Value))
                         {
+                            _migrationLogger?.LogSkipped($"event_id={record.EVENTID} not found in event_master", $"SUPATTACHEMNTID={record.SUPATTACHEMNTID}");
                             _logger.LogWarning($"Skipping SUPATTACHEMNTID {record.SUPATTACHEMNTID}: event_id={record.EVENTID} not found in event_master");
                             skippedRecords++;
                             continue;
@@ -156,6 +158,7 @@ namespace DataMigration.Services
                         // Validate supplier_id (REQUIRED - NOT NULL constraint)
                         if (!record.SUPPLIERID.HasValue)
                         {
+                            _migrationLogger?.LogSkipped("SUPPLIERID is null", $"SUPATTACHEMNTID={record.SUPATTACHEMNTID}");
                             _logger.LogWarning($"Skipping SUPATTACHEMNTID {record.SUPATTACHEMNTID}: SUPPLIERID is null");
                             skippedRecords++;
                             continue;
@@ -163,6 +166,7 @@ namespace DataMigration.Services
 
                         if (!validSupplierIds.Contains(record.SUPPLIERID.Value))
                         {
+                            _migrationLogger?.LogSkipped($"supplier_id={record.SUPPLIERID} not found in supplier_master", $"SUPATTACHEMNTID={record.SUPATTACHEMNTID}");
                             _logger.LogWarning($"Skipping SUPATTACHEMNTID {record.SUPATTACHEMNTID}: supplier_id={record.SUPPLIERID} not found in supplier_master");
                             skippedRecords++;
                             continue;
@@ -171,6 +175,7 @@ namespace DataMigration.Services
                         // Validate file_name (REQUIRED - NOT NULL constraint)
                         if (string.IsNullOrWhiteSpace(record.ATTACHMENTNAME))
                         {
+                            _migrationLogger?.LogSkipped("ATTACHMENTNAME is null or empty", $"SUPATTACHEMNTID={record.SUPATTACHEMNTID}");
                             _logger.LogWarning($"Skipping SUPATTACHEMNTID {record.SUPATTACHEMNTID}: ATTACHMENTNAME is null or empty");
                             skippedRecords++;
                             continue;
@@ -193,6 +198,7 @@ namespace DataMigration.Services
 
                         insertBatch.Add(targetRow);
                         migratedRecords++;
+                        _migrationLogger?.LogInserted($"SUPATTACHEMNTID={record.SUPATTACHEMNTID}");
 
                         // Execute batch when it reaches the size limit
                         if (insertBatch.Count >= batchSize)
@@ -203,6 +209,7 @@ namespace DataMigration.Services
                     }
                     catch (Exception ex)
                     {
+                        _migrationLogger?.LogSkipped(ex.Message, $"SUPATTACHEMNTID={record.SUPATTACHEMNTID}");
                         _logger.LogError($"SUPATTACHEMNTID {record.SUPATTACHEMNTID}: {ex.Message}");
                         skippedRecords++;
                     }
@@ -219,7 +226,18 @@ namespace DataMigration.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Migration failed");
-                throw;
+            }
+
+            // Export migration stats to Excel
+            try
+            {
+                var outputPath = $"SupplierPriceBidDocumentMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+                var skippedRecordsList = _migrationLogger?.GetSkippedRecords().Select(x => (x.RecordIdentifier, x.Message)).ToList() ?? new List<(string, string)>();
+                MigrationStatsExporter.ExportToExcel(outputPath, migratedRecords + skippedRecords, migratedRecords, skippedRecords, _logger, skippedRecordsList);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Failed to export migration stats: {ex.Message}");
             }
 
             return migratedRecords;

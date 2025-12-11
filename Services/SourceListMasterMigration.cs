@@ -163,7 +163,18 @@ namespace DataMigration.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Migration failed");
-                throw;
+            }
+
+            // Export migration stats to Excel
+            try
+            {
+                var outputPath = $"SourceListMasterMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+                var skippedRecordsList = _migrationLogger?.GetSkippedRecords().Select(x => (x.RecordIdentifier, x.Message)).ToList() ?? new List<(string, string)>();
+                MigrationStatsExporter.ExportToExcel(outputPath, migratedRecords + skippedRecords, migratedRecords, skippedRecords, _logger, skippedRecordsList);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Failed to export migration stats: {ex.Message}");
             }
 
             return migratedRecords;

@@ -196,6 +196,7 @@ public class WorkflowHistoryMigration : MigrationService
         var processedCount = 0;
         var insertedCount = 0;
         var skippedCount = 0;
+        var skippedRecords = new List<(int RecordNo, string Reason, Dictionary<string, object> Details)>();
         
         var cancellationToken = new CancellationTokenSource(TimeSpan.FromMinutes(180)).Token; // Increased to 3 hours
         
@@ -211,7 +212,7 @@ public class WorkflowHistoryMigration : MigrationService
             {
                 processedCount++;
                 
-                var record = ProcessRecordFast(reader, processedCount);
+                var (record, skipReason) = ProcessRecordFastWithReason(reader, processedCount);
                 if (record != null)
                 {
                     batch.Add(record);
@@ -219,6 +220,16 @@ public class WorkflowHistoryMigration : MigrationService
                 else
                 {
                     skippedCount++;
+                    if (!string.IsNullOrEmpty(skipReason))
+                    {
+                        var details = new Dictionary<string, object>
+                        {
+                            {"WFHistory_ID", reader.IsDBNull(0) ? "NULL" : reader.GetInt32(0).ToString()},
+                            {"Entry", reader.IsDBNull(1) ? "NULL" : reader.GetString(1)},
+                            {"Entry_ID", reader.IsDBNull(2) ? "NULL" : reader.GetInt32(2).ToString()}
+                        };
+                        skippedRecords.Add((processedCount, skipReason, details));
+                    }
                 }
                 
                 // Process batch when it reaches BATCH_SIZE
@@ -249,6 +260,17 @@ public class WorkflowHistoryMigration : MigrationService
             var totalRate = insertedCount / stopwatch.Elapsed.TotalSeconds;
             Console.WriteLine($"WorkflowHistory Migration completed. Total time: {stopwatch.Elapsed:mm\\:ss}, Rate: {totalRate:F1}/sec");
             Console.WriteLine($"Final counts - Processed: {processedCount:N0}, Inserted: {insertedCount:N0}, Skipped: {skippedCount:N0}");
+            
+            // Export migration statistics to Excel
+            var outputPath = "workflow_history_migration_stats.xlsx";
+            MigrationStatsExporter.ExportToExcel(
+                outputPath,
+                processedCount,
+                insertedCount,
+                skippedCount,
+                _logger,
+                skippedRecords.Select(r => (r.RecordNo.ToString(), r.Reason)).ToList()
+            );
         }
         catch (Exception ex)
         {
@@ -257,6 +279,81 @@ public class WorkflowHistoryMigration : MigrationService
         }
         
         return insertedCount;
+    }
+
+    private (WorkflowHistoryRecord?, string) ProcessRecordFastWithReason(SqlDataReader reader, int recordNumber)
+    {
+        // Optimized version with skip reason tracking
+        var wfHistoryId = reader.IsDBNull(0) ? 0 : reader.GetInt32(0); // WFHistory_ID
+        if (wfHistoryId <= 0) 
+            return (null, $"Invalid WFHistory_ID ({wfHistoryId})");
+
+        var entry = reader.IsDBNull(1) ? "" : reader.GetString(1); // Entry
+        var entryId = reader.IsDBNull(2) ? 0 : reader.GetInt32(2); // Entry_ID
+        var workFlowId = reader.IsDBNull(3) ? (int?)null : reader.GetInt32(3); // WorkFlowId
+        var approvedBy = reader.IsDBNull(4) ? (int?)null : reader.GetInt32(4); // Approvedby
+        var alternateApprovedBy = reader.IsDBNull(5) ? (int?)null : reader.GetInt32(5); // AlternateApprovedBy
+        var responseDate = reader.IsDBNull(6) ? (DateTime?)null : reader.GetDateTime(6); // ResponseDate
+        var responseUser = reader.IsDBNull(7) ? (int?)null : reader.GetInt32(7); // ResponseUser
+        var responseRemark = reader.IsDBNull(8) ? "" : reader.GetString(8); // ResponseRemark
+        var responseStatus = reader.IsDBNull(9) ? "" : reader.GetString(9); // ResponseStatus
+        var entryStatus = reader.IsDBNull(10) ? "" : reader.GetString(10); // EntryStatus
+        var level = reader.IsDBNull(11) ? (int?)null : reader.GetInt32(11); // Level
+        var workflowSubId = reader.IsDBNull(12) ? 0 : reader.GetInt32(12); // WorkflowSubId
+        var workflowSubSubId = reader.IsDBNull(13) ? 0 : reader.GetInt32(13); // WorkflowSubSubId
+        var assignDate = reader.IsDBNull(15) ? DateTime.UtcNow : reader.GetDateTime(15); // AssignDate
+        var assignUser = reader.IsDBNull(17) ? (int?)null : reader.GetInt32(17); // AssignUser
+        var workflowRound = reader.IsDBNull(21) ? (int?)null : reader.GetInt32(21); // WorkflowRound
+
+        // Ensure non-null values for required fields
+        if (workflowSubId <= 0) workflowSubId = 0;
+        if (workflowSubSubId <= 0) workflowSubSubId = 0;
+
+        // Optimized array creation
+        int[]? approvedByArray = null;
+        if (approvedBy.HasValue && approvedBy.Value > 0)
+        {
+            if (alternateApprovedBy.HasValue && alternateApprovedBy.Value > 0)
+            {
+                approvedByArray = new int[] { approvedBy.Value, alternateApprovedBy.Value };
+            }
+            else
+            {
+                approvedByArray = new int[] { approvedBy.Value };
+            }
+        }
+        else if (alternateApprovedBy.HasValue && alternateApprovedBy.Value > 0)
+        {
+            approvedByArray = new int[] { alternateApprovedBy.Value };
+        }
+
+        var record = new WorkflowHistoryRecord
+        {
+            WorkflowHistoryId = wfHistoryId,
+            WorkflowFor = entry,
+            WorkflowForId = entryId,
+            ApprovedBy = approvedByArray,
+            ActionTakenDate = responseDate,
+            ActionTakenUser = responseUser,
+            ActionTakenRemarks = responseRemark,
+            ActionStatus = responseStatus,
+            WorkflowForStatus = entryStatus,
+            WorkflowLevel = level,
+            WorkflowMasterId = workFlowId,
+            WorkflowRound = workflowRound,
+            CreatedBy = assignUser,
+            CreatedDate = assignDate,
+            ModifiedBy = null,
+            ModifiedDate = null,
+            IsDeleted = false,
+            DeletedBy = null,
+            DeletedDate = null,
+            WorkflowAmountId = workflowSubId,
+            WorkflowApprovalUserId = workflowSubSubId,
+            PlantId = null
+        };
+
+        return (record, string.Empty);
     }
 
     private WorkflowHistoryRecord? ProcessRecordFast(SqlDataReader reader, int recordNumber)

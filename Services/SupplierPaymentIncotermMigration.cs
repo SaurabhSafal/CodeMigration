@@ -113,14 +113,13 @@ public class SupplierPaymentIncotermMigration : MigrationService
 
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
-        _migrationLogger = new MigrationLogger(_logger, "supplier_payment_incoterm");
-        _migrationLogger.LogInfo("Starting migration");
-
         int insertedCount = 0;
         int skippedCount = 0;
         int totalCount = 0;
         var stopwatch = Stopwatch.StartNew();
-        
+        _migrationLogger = new MigrationLogger(_logger, "supplier_payment_incoterm");
+        _migrationLogger.LogInfo("Starting migration");
+
         _logger?.LogInformation("🔍 Loading valid foreign key IDs from PostgreSQL...");
         
         // Load valid supplier IDs
@@ -170,7 +169,6 @@ public class SupplierPaymentIncotermMigration : MigrationService
         while (await sqlReader.ReadAsync())
         {
             totalCount++;
-            
             try
             {
                 var vendorPoTermId = Convert.ToInt32(sqlReader["VendorPOTermId"]);
@@ -184,7 +182,6 @@ public class SupplierPaymentIncotermMigration : MigrationService
                 // Validate foreign keys
                 bool isValid = true;
                 var errors = new List<string>();
-                
                 if (supplierId == 0)
                 {
                     errors.Add("supplier_id is NULL or 0");
@@ -195,19 +192,16 @@ public class SupplierPaymentIncotermMigration : MigrationService
                     errors.Add($"supplier_id {supplierId} not found in supplier_master");
                     isValid = false;
                 }
-                
                 if (paymentTermId != 0 && !validPaymentTermIds.Contains(paymentTermId))
                 {
                     errors.Add($"payment_term_id {paymentTermId} not found in payment_term_master");
                     isValid = false;
                 }
-                
                 if (incotermId != 0 && !validIncotermIds.Contains(incotermId))
                 {
                     errors.Add($"incoterm_id {incotermId} not found in incoterm_master");
                     isValid = false;
                 }
-                
                 if (!isValid)
                 {
                     if (skippedCount < 10) // Log first 10 skips
@@ -215,9 +209,9 @@ public class SupplierPaymentIncotermMigration : MigrationService
                         _logger?.LogWarning($"⚠️ Skipping VendorPOTermId {vendorPoTermId}: {string.Join(", ", errors)}");
                     }
                     skippedCount++;
+                    _migrationLogger?.LogSkipped(string.Join(", ", errors), $"VendorPOTermId={vendorPoTermId}");
                     continue;
                 }
-                
                 // Add to batch
                 batch.Add(new SupplierPaymentIncotermRecord
                 {
@@ -229,7 +223,7 @@ public class SupplierPaymentIncotermMigration : MigrationService
                     IncotermRemark = incotermRemark,
                     CompanyId = companyId
                 });
-                
+                _migrationLogger?.LogInserted($"VendorPOTermId={vendorPoTermId}");
                 // Insert batch when it reaches BATCH_SIZE
                 if (batch.Count >= BATCH_SIZE)
                 {
@@ -242,8 +236,9 @@ public class SupplierPaymentIncotermMigration : MigrationService
             }
             catch (Exception ex)
             {
+                skippedCount++;
+                _migrationLogger?.LogSkipped(ex.Message, $"VendorPOTermId={sqlReader["VendorPOTermId"]}");
                 _logger?.LogError($"❌ Error processing record at position {totalCount}: {ex.Message}");
-                throw;
             }
         }
         
@@ -265,7 +260,17 @@ public class SupplierPaymentIncotermMigration : MigrationService
         _logger?.LogInformation($"  ⏱️ Duration: {stopwatch.Elapsed:hh\\:mm\\:ss}");
         _logger?.LogInformation($"  🚀 Throughput: {(totalCount / stopwatch.Elapsed.TotalSeconds):N0} records/sec");
         _logger?.LogInformation("═══════════════════════════════════════════════════════════════");
-        
+        // Export migration stats to Excel
+        try
+        {
+            var outputPath = $"SupplierPaymentIncotermMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+            var skippedRecordsList = _migrationLogger?.GetSkippedRecords().Select(x => (x.RecordIdentifier, x.Message)).ToList() ?? new List<(string, string)>();
+            MigrationStatsExporter.ExportToExcel(outputPath, totalCount, insertedCount, skippedCount, _logger, skippedRecordsList);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError($"Failed to export migration stats: {ex.Message}");
+        }
         return insertedCount;
     }
     

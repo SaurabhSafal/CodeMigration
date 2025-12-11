@@ -46,6 +46,7 @@ namespace DataMigration.Services
 
             var migratedRecords = 0;
             var skippedRecords = 0;
+            var skippedDetails = new List<(string, string)>(); // (record id, reason)
 
             try
             {
@@ -151,8 +152,10 @@ namespace DataMigration.Services
                         {
                             if (!validUserPriceBidNonPricingIds.Contains(record.PB_BuyerNonPricingId.Value))
                             {
-                                _logger.LogWarning($"Skipping PB_SupplerNonPricingId {record.PB_SupplerNonPricingId}: user_price_bid_non_pricing_id={record.PB_BuyerNonPricingId} not found in user_price_bid_non_pricing");
+                                var reason = $"user_price_bid_non_pricing_id={record.PB_BuyerNonPricingId} not found in user_price_bid_non_pricing";
+                                _logger.LogWarning($"Skipping PB_SupplerNonPricingId {record.PB_SupplerNonPricingId}: {reason}");
                                 skippedRecords++;
+                                skippedDetails.Add(($"{record.PB_SupplerNonPricingId}", reason));
                                 continue;
                             }
                         }
@@ -160,16 +163,20 @@ namespace DataMigration.Services
                         // Validate event_id exists in event_master (FK constraint)
                         if (record.EVENT_ID.HasValue && !validEventIds.Contains(record.EVENT_ID.Value))
                         {
-                            _logger.LogWarning($"Skipping PB_SupplerNonPricingId {record.PB_SupplerNonPricingId}: event_id={record.EVENT_ID} not found in event_master");
+                            var reason = $"event_id={record.EVENT_ID} not found in event_master";
+                            _logger.LogWarning($"Skipping PB_SupplerNonPricingId {record.PB_SupplerNonPricingId}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"{record.PB_SupplerNonPricingId}", reason));
                             continue;
                         }
 
                         // Validate supplier_id exists in supplier_master (FK constraint)
                         if (record.SUPPLIER_ID.HasValue && !validSupplierIds.Contains(record.SUPPLIER_ID.Value))
                         {
-                            _logger.LogWarning($"Skipping PB_SupplerNonPricingId {record.PB_SupplerNonPricingId}: supplier_id={record.SUPPLIER_ID} not found in supplier_master");
+                            var reason = $"supplier_id={record.SUPPLIER_ID} not found in supplier_master";
+                            _logger.LogWarning($"Skipping PB_SupplerNonPricingId {record.PB_SupplerNonPricingId}: {reason}");
                             skippedRecords++;
+                            skippedDetails.Add(($"{record.PB_SupplerNonPricingId}", reason));
                             continue;
                         }
 
@@ -192,8 +199,10 @@ namespace DataMigration.Services
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError($"PB_SupplerNonPricingId {record.PB_SupplerNonPricingId}: {ex.Message}");
+                        var reason = ex.Message;
+                        _logger.LogError($"PB_SupplerNonPricingId {record.PB_SupplerNonPricingId}: {reason}");
                         skippedRecords++;
+                        skippedDetails.Add(($"{record.PB_SupplerNonPricingId}", reason));
                     }
                 }
 
@@ -203,6 +212,17 @@ namespace DataMigration.Services
                 }
 
                 _logger.LogInformation($"Migration completed. Migrated: {migratedRecords}, Skipped: {skippedRecords}");
+
+                // Export migration stats to Excel
+                var totalRecords = migratedRecords + skippedRecords;
+                MigrationStatsExporter.ExportToExcel(
+                    "migration_outputs/SupplierPriceBidNonPricingMigration_Stats.xlsx",
+                    totalRecords,
+                    migratedRecords,
+                    skippedRecords,
+                    _logger,
+                    skippedDetails
+                );
             }
             catch (Exception ex)
             {

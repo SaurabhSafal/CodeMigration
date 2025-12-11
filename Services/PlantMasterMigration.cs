@@ -53,42 +53,71 @@ public class PlantMasterMigration : MigrationService
     {
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await sqlCmd.ExecuteReaderAsync();
-
         using var pgCmd = new NpgsqlCommand(InsertQuery, pgConn);
         if (transaction != null)
         {
             pgCmd.Transaction = transaction;
         }
 
+        int totalRecords = 0;
+        int insertedRecords = 0;
+        var skippedRecords = new List<(string RecordId, string Reason)>();
+
         while (await reader.ReadAsync())
         {
+            totalRecords++;
             var plantId = reader["PlantId"];
             var recordId = $"ID={plantId}";
-            
-            pgCmd.Parameters.Clear();
-            pgCmd.Parameters.AddWithValue("@plant_id", plantId);
-            pgCmd.Parameters.AddWithValue("@company_id", reader["ClientSAPId"]);
-            pgCmd.Parameters.AddWithValue("@plant_code", reader["PlantCode"]);
-            pgCmd.Parameters.AddWithValue("@plant_name", reader["PlantName"]);
-            pgCmd.Parameters.AddWithValue("@plant_company_code", reader["CompanyCode"]);
-            pgCmd.Parameters.AddWithValue("@plant_location", reader.IsDBNull(reader.GetOrdinal("Location")) ? (object)DBNull.Value : reader["Location"]);
-            pgCmd.Parameters.AddWithValue("@created_by", 0);
-            pgCmd.Parameters.AddWithValue("@created_date", DateTime.UtcNow);
-            pgCmd.Parameters.AddWithValue("@modified_by", DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@modified_date", DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@is_deleted", false);
-            pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value);
-            int result = await pgCmd.ExecuteNonQueryAsync();
-            if (result > 0)
+            try
             {
-                migrationLogger.LogInserted(recordId);
+                pgCmd.Parameters.Clear();
+                pgCmd.Parameters.AddWithValue("@plant_id", plantId);
+                pgCmd.Parameters.AddWithValue("@company_id", reader["ClientSAPId"]);
+                pgCmd.Parameters.AddWithValue("@plant_code", reader["PlantCode"]);
+                pgCmd.Parameters.AddWithValue("@plant_name", reader["PlantName"]);
+                pgCmd.Parameters.AddWithValue("@plant_company_code", reader["CompanyCode"]);
+                pgCmd.Parameters.AddWithValue("@plant_location", reader.IsDBNull(reader.GetOrdinal("Location")) ? (object)DBNull.Value : reader["Location"]);
+                pgCmd.Parameters.AddWithValue("@created_by", 0);
+                pgCmd.Parameters.AddWithValue("@created_date", DateTime.UtcNow);
+                pgCmd.Parameters.AddWithValue("@modified_by", DBNull.Value);
+                pgCmd.Parameters.AddWithValue("@modified_date", DBNull.Value);
+                pgCmd.Parameters.AddWithValue("@is_deleted", false);
+                pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value);
+                pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value);
+                int result = await pgCmd.ExecuteNonQueryAsync();
+                if (result > 0)
+                {
+                    migrationLogger.LogInserted(recordId);
+                    insertedRecords++;
+                }
+                else
+                {
+                    skippedRecords.Add((recordId, "Insert returned 0 rows"));
+                    migrationLogger.LogSkipped(recordId, "Insert returned 0 rows");
+                }
+            }
+            catch (Exception ex)
+            {
+                skippedRecords.Add((recordId, ex.Message));
+                migrationLogger.LogSkipped(recordId, ex.Message);
             }
         }
-        
+
         var summary = migrationLogger.GetSummary();
-        _logger.LogInformation($"Plant Master Migration completed. Inserted: {summary.TotalInserted}, Skipped: {summary.TotalSkipped}");
-        
-        return summary.TotalInserted;
+        _logger.LogInformation($"Plant Master Migration completed. Total: {totalRecords}, Inserted: {insertedRecords}, Skipped: {skippedRecords.Count}");
+
+        // Export migration stats to Excel
+        string outputPath = "plant_master_migration_stats.xlsx";
+        MigrationStatsExporter.ExportToExcel(
+            outputPath,
+            totalRecords,
+            insertedRecords,
+            skippedRecords.Count,
+            _logger,
+            skippedRecords
+        );
+        _logger.LogInformation($"Migration stats exported to migration_outputs/{outputPath}");
+
+        return insertedRecords;
     }
 }

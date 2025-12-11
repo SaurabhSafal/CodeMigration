@@ -58,7 +58,7 @@ namespace DataMigration.Services
             }
 
             var migratedRecords = 0;
-            var skippedRecords = 0;
+            var skippedRecords = new List<(string RecordId, string Reason)>();
 
             try
             {
@@ -148,14 +148,14 @@ namespace DataMigration.Services
                         if (!record.POId.HasValue)
                         {
                             _logger.LogDebug($"POSubId {record.POSubId}: po_header_id (POId) is NULL (NOT NULL constraint), skipping record");
-                            skippedRecords++;
+                            skippedRecords.Add(($"POSubId={record.POSubId}", "po_header_id (POId) is NULL (NOT NULL constraint)"));
                             continue;
                         }
 
                         if (!validPoHeaderIds.Contains(record.POId.Value))
                         {
                             _logger.LogDebug($"POSubId {record.POSubId}: po_header_id {record.POId.Value} not found in po_header (FK constraint), skipping record");
-                            skippedRecords++;
+                            skippedRecords.Add(($"POSubId={record.POSubId}", $"po_header_id {record.POId.Value} not found in po_header (FK constraint)"));
                             continue;
                         }
 
@@ -197,7 +197,7 @@ namespace DataMigration.Services
                     catch (Exception ex)
                     {
                         _logger.LogError($"POSubId {record.POSubId}: {ex.Message}");
-                        skippedRecords++;
+                        skippedRecords.Add(($"POSubId={record.POSubId}", ex.Message));
                     }
                 }
 
@@ -207,7 +207,18 @@ namespace DataMigration.Services
                     await ExecuteInsertBatch(pgConnection, insertBatch);
                 }
 
-                _logger.LogInformation($"Migration completed. Migrated: {migratedRecords}, Skipped: {skippedRecords}");
+                _logger.LogInformation($"Migration completed. Migrated: {migratedRecords}, Skipped: {skippedRecords.Count}");
+                // Export migration stats to Excel
+                string outputPath = "po_line_migration_stats.xlsx";
+                MigrationStatsExporter.ExportToExcel(
+                    outputPath,
+                    sourceData.Count,
+                    migratedRecords,
+                    skippedRecords.Count,
+                    _logger,
+                    skippedRecords
+                );
+                _logger.LogInformation($"Migration stats exported to migration_outputs/{outputPath}");
             }
             catch (Exception ex)
             {

@@ -147,17 +147,58 @@ public class PRAttachmentMigration : MigrationService
 
         _logger.LogInformation("Starting COPY-optimized PRAttachment migration (metadata only - binaries will be handled by background service)");
 
-        // Phase 0: ensure target table has a suitable unique constraint used for ON CONFLICT
-        // We'll assume unique on pr_attachment_id exists. If not, the merge statement must be adjusted.
+        // Track migration statistics
+        var skippedRecords = new List<(string RecordId, string Reason)>();
+        int totalRecords = 0;
+        int insertedRecords = 0;
 
-        // Phase 1: COPY metadata (no binary column)
-        int metadataRows = await CopyMetadataAsync(sqlConn, pgConn, cancellationToken);
+        try
+        {
+            // Get total count
+            var countCmd = new SqlCommand("SELECT COUNT(*) FROM TBL_PRATTACHMENT", sqlConn);
+            totalRecords = (int)await countCmd.ExecuteScalarAsync(cancellationToken);
+            _logger.LogInformation($"Total records to migrate: {totalRecords:N0}");
 
-        // Phase 2: apply metadata merge into pr_attachments
-        int merged = await MergeMetadataAsync(pgConn, cancellationToken);
+            // Phase 1: COPY metadata (no binary column)
+            insertedRecords = await CopyMetadataAsync(sqlConn, pgConn, cancellationToken);
 
-        _logger.LogInformation($"Metadata migration completed: metadataRows={metadataRows}, merged={merged}. Binary migration will run in background.");
-        return merged; // merged count is the primary success metric
+            // Phase 2: apply metadata merge into pr_attachments
+            int merged = await MergeMetadataAsync(pgConn, cancellationToken);
+
+            _logger.LogInformation($"Metadata migration completed: metadataRows={insertedRecords}, merged={merged}. Binary migration will run in background.");
+
+            // Export migration stats to Excel
+            string outputPath = "pr_attachment_migration_stats.xlsx";
+            MigrationStatsExporter.ExportToExcel(
+                outputPath,
+                totalRecords,
+                insertedRecords,
+                totalRecords - insertedRecords,
+                _logger,
+                skippedRecords
+            );
+            _logger.LogInformation($"Migration stats exported to migration_outputs/{outputPath}");
+
+            return merged;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Migration failed");
+            
+            // Export stats even on failure
+            string outputPath = "pr_attachment_migration_stats.xlsx";
+            MigrationStatsExporter.ExportToExcel(
+                outputPath,
+                totalRecords,
+                insertedRecords,
+                totalRecords - insertedRecords,
+                _logger,
+                skippedRecords
+            );
+            _logger.LogInformation($"Migration stats exported to migration_outputs/{outputPath} (migration failed)");
+            
+            throw;
+        }
     }
 
     /// <summary>

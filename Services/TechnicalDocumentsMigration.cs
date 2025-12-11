@@ -140,11 +140,12 @@ ON CONFLICT (technical_document_id) DO UPDATE SET
         _migrationLogger.LogInfo("Starting migration");
 
         _logger.LogInformation("Starting TechnicalDocuments migration...");
-        
         int insertedCount = 0;
         int skippedCount = 0;
         int batchNumber = 0;
         var batch = new List<Dictionary<string, object>>();
+        var skippedRecords = new List<Dictionary<string, object>>();
+        var skippedReasons = new List<string>();
 
         // Load valid event IDs
         var validEventIds = await LoadValidEventIdsAsync(pgConn, transaction);
@@ -179,8 +180,14 @@ ON CONFLICT (technical_document_id) DO UPDATE SET
             // Validate required keys
             if (technicalAttachmentId == DBNull.Value)
             {
-                _logger.LogWarning($"Skipping row: TECHNICALATTACHMENTID is NULL.");
+                string reason = "TECHNICALATTACHMENTID is NULL.";
+                _logger.LogWarning($"Skipping row: {reason}");
                 skippedCount++;
+                skippedRecords.Add(new Dictionary<string, object> {
+                    ["TECHNICALATTACHMENTID"] = technicalAttachmentId,
+                    ["Reason"] = reason
+                });
+                skippedReasons.Add(reason);
                 continue;
             }
 
@@ -190,8 +197,15 @@ ON CONFLICT (technical_document_id) DO UPDATE SET
                 int eventIdValue = Convert.ToInt32(eventId);
                 if (!validEventIds.Contains(eventIdValue))
                 {
-                    _logger.LogWarning($"Skipping TECHNICALATTACHMENTID {technicalAttachmentId}: event_id {eventIdValue} not found in event_master.");
+                    string reason = $"event_id {eventIdValue} not found in event_master.";
+                    _logger.LogWarning($"Skipping TECHNICALATTACHMENTID {technicalAttachmentId}: {reason}");
                     skippedCount++;
+                    skippedRecords.Add(new Dictionary<string, object> {
+                        ["TECHNICALATTACHMENTID"] = technicalAttachmentId,
+                        ["EVENTID"] = eventIdValue,
+                        ["Reason"] = reason
+                    });
+                    skippedReasons.Add(reason);
                     continue;
                 }
             }
@@ -255,6 +269,28 @@ ON CONFLICT (technical_document_id) DO UPDATE SET
             _logger.LogInformation($"Inserting final batch {batchNumber} with {batch.Count} records...");
             insertedCount += await InsertBatchAsync(pgConn, batch, transaction, batchNumber);
         }
+
+        // Prepare skipped records for export
+        var skippedRecordsForExport = new List<(string RecordId, string Reason)>();
+        foreach (var rec in skippedRecords)
+        {
+            string recordId = rec.ContainsKey("TECHNICALATTACHMENTID") && rec["TECHNICALATTACHMENTID"] != null ? rec["TECHNICALATTACHMENTID"].ToString() : "";
+            string reason = rec.ContainsKey("Reason") && rec["Reason"] != null ? rec["Reason"].ToString() : "";
+            skippedRecordsForExport.Add((recordId, reason));
+        }
+
+        // Export migration statistics to Excel
+        int totalRecords = insertedCount + skippedCount;
+        string outputPath = System.IO.Path.Combine("migration_outputs", $"TechnicalDocumentsMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx");
+        MigrationStatsExporter.ExportToExcel(
+            outputPath,
+            totalRecords,
+            insertedCount,
+            skippedCount,
+            _logger,
+            skippedRecordsForExport
+        );
+        _logger.LogInformation($"Migration statistics exported to {outputPath}");
 
         _logger.LogInformation($"TechnicalDocuments migration completed. Inserted: {insertedCount}, Skipped: {skippedCount}");
         return insertedCount;

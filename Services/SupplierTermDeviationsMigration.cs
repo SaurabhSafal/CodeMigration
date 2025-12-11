@@ -137,6 +137,7 @@ public class SupplierTermDeviationsMigration : MigrationService
         int totalRecords = 0;
         int migratedRecords = 0;
         int skippedRecords = 0;
+        var skippedDetails = new List<(string, string)>(); // (record id, reason)
 
         try
         {
@@ -172,7 +173,9 @@ public class SupplierTermDeviationsMigration : MigrationService
                 if (vendorDeviationTrnId == DBNull.Value)
                 {
                     skippedRecords++;
-                    _logger.LogWarning("Skipping record - VENDORDEVIATIONTRNID is NULL");
+                    var reason = "VENDORDEVIATIONTRNID is NULL";
+                    _logger.LogWarning($"Skipping record - {reason}");
+                    skippedDetails.Add(("VENDORDEVIATIONTRNID:NULL", reason));
                     continue;
                 }
 
@@ -182,6 +185,8 @@ public class SupplierTermDeviationsMigration : MigrationService
                 if (processedIds.Contains(vendorDeviationTrnIdValue))
                 {
                     skippedRecords++;
+                    var reason = "Duplicate VENDORDEVIATIONTRNID";
+                    skippedDetails.Add(($"VENDORDEVIATIONTRNID:{vendorDeviationTrnIdValue}", reason));
                     continue;
                 }
 
@@ -189,7 +194,9 @@ public class SupplierTermDeviationsMigration : MigrationService
                 if (vendorDeviationMstId == DBNull.Value)
                 {
                     skippedRecords++;
-                    _logger.LogWarning($"Skipping VENDORDEVIATIONTRNID {vendorDeviationTrnIdValue} - supplier_term_id is NULL");
+                    var reason = "supplier_term_id is NULL";
+                    _logger.LogWarning($"Skipping VENDORDEVIATIONTRNID {vendorDeviationTrnIdValue} - {reason}");
+                    skippedDetails.Add(($"VENDORDEVIATIONTRNID:{vendorDeviationTrnIdValue}", reason));
                     continue;
                 }
 
@@ -199,7 +206,9 @@ public class SupplierTermDeviationsMigration : MigrationService
                 if (!supplierTermsMap.ContainsKey(vendorDeviationMstIdValue))
                 {
                     skippedRecords++;
-                    _logger.LogWarning($"Skipping VENDORDEVIATIONTRNID {vendorDeviationTrnIdValue} - Invalid supplier_term_id: {vendorDeviationMstIdValue}");
+                    var reason = $"Invalid supplier_term_id: {vendorDeviationMstIdValue}";
+                    _logger.LogWarning($"Skipping VENDORDEVIATIONTRNID {vendorDeviationTrnIdValue} - {reason}");
+                    skippedDetails.Add(($"VENDORDEVIATIONTRNID:{vendorDeviationTrnIdValue}", reason));
                     continue;
                 }
 
@@ -208,22 +217,17 @@ public class SupplierTermDeviationsMigration : MigrationService
                 // Determine user_id and supplier_id based on USERTYPE
                 object userId = DBNull.Value;
                 object supplierId = DBNull.Value;
-                
                 string userTypeValue = userType != DBNull.Value ? userType?.ToString()?.Trim() ?? string.Empty : string.Empty;
-                
                 if (string.Equals(userTypeValue, "Vendor", StringComparison.OrdinalIgnoreCase))
                 {
-                    // If USERTYPE = 'Vendor', ACTIONBY goes to supplier_id
                     supplierId = actionBy ?? DBNull.Value;
                 }
                 else
                 {
-                    // If USERTYPE != 'Vendor', ACTIONBY goes to user_id
                     userId = actionBy ?? DBNull.Value;
-                    // Use supplier_id from supplier_terms lookup
                     supplierId = supplierTermData.SupplierId.HasValue ? (object)supplierTermData.SupplierId.Value : DBNull.Value;
                 }
-                
+
                 // Validate user_id if not null and USERTYPE != 'Vendor'
                 if (userId != DBNull.Value)
                 {
@@ -231,7 +235,9 @@ public class SupplierTermDeviationsMigration : MigrationService
                     if (!validUserIds.Contains(userIdValue))
                     {
                         skippedRecords++;
-                        _logger.LogWarning($"Skipping VENDORDEVIATIONTRNID {vendorDeviationTrnIdValue} - Invalid user_id: {userIdValue}");
+                        var reason = $"Invalid user_id: {userIdValue}";
+                        _logger.LogWarning($"Skipping VENDORDEVIATIONTRNID {vendorDeviationTrnIdValue} - {reason}");
+                        skippedDetails.Add(($"VENDORDEVIATIONTRNID:{vendorDeviationTrnIdValue}", reason));
                         continue;
                     }
                 }
@@ -280,6 +286,16 @@ public class SupplierTermDeviationsMigration : MigrationService
             }
 
             _logger.LogInformation($"Supplier Term Deviations migration completed. Total: {totalRecords}, Migrated: {migratedRecords}, Skipped: {skippedRecords}");
+
+            // Export migration stats to Excel
+            MigrationStatsExporter.ExportToExcel(
+                "migration_outputs/SupplierTermDeviationsMigration_Stats.xlsx",
+                totalRecords,
+                migratedRecords,
+                skippedRecords,
+                _logger,
+                skippedDetails
+            );
 
             return migratedRecords;
         }

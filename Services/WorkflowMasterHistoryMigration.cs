@@ -92,7 +92,8 @@ public class WorkflowMasterHistoryMigration : MigrationService
 
         int insertedCount = 0;
         int processedCount = 0;
-        
+        int skippedCount = 0;
+        var skippedRecords = new List<(int RecordNo, string Reason, Dictionary<string, object> Details)>();
         try
         {
             while (await reader.ReadAsync())
@@ -119,19 +120,35 @@ public class WorkflowMasterHistoryMigration : MigrationService
                     // Validate required fields
                     if (reader.IsDBNull(reader.GetOrdinal("ClientSAPId")) || clientSAPId == 0)
                     {
-                        Console.WriteLine($"Skipping record {processedCount} (WorkFlowHistoryId: {workFlowHistoryId}) - ClientSAPId is null or zero");
+                        skippedCount++;
+                        var details = new Dictionary<string, object> {
+                            {"WorkFlowHistoryId", workFlowHistoryId},
+                            {"WorkFlowNo", workFlowNo ?? ""},
+                            {"Name", name ?? ""}
+                        };
+                        skippedRecords.Add((processedCount, "ClientSAPId is null or zero", details));
                         continue;
                     }
-
                     if (string.IsNullOrWhiteSpace(workFlowNo))
                     {
-                        Console.WriteLine($"Skipping record {processedCount} (WorkFlowHistoryId: {workFlowHistoryId}) - WorkFlowNo is null or empty");
+                        skippedCount++;
+                        var details = new Dictionary<string, object> {
+                            {"WorkFlowHistoryId", workFlowHistoryId},
+                            {"ClientSAPId", clientSAPId},
+                            {"Name", name ?? ""}
+                        };
+                        skippedRecords.Add((processedCount, "WorkFlowNo is null or empty", details));
                         continue;
                     }
-
                     if (string.IsNullOrWhiteSpace(name))
                     {
-                        Console.WriteLine($"Skipping record {processedCount} (WorkFlowHistoryId: {workFlowHistoryId}) - Name is null or empty");
+                        skippedCount++;
+                        var details = new Dictionary<string, object> {
+                            {"WorkFlowHistoryId", workFlowHistoryId},
+                            {"ClientSAPId", clientSAPId},
+                            {"WorkFlowNo", workFlowNo ?? ""}
+                        };
+                        skippedRecords.Add((processedCount, "Name is null or empty", details));
                         continue;
                     }
 
@@ -164,7 +181,12 @@ public class WorkflowMasterHistoryMigration : MigrationService
                 }
                 catch (Exception recordEx)
                 {
-                    throw new Exception($"Error processing record {processedCount} in Workflow Master History Migration: {recordEx.Message}", recordEx);
+                    skippedCount++;
+                    var details = new Dictionary<string, object> {
+                        {"Exception", recordEx.Message},
+                        {"WorkFlowHistoryId", reader.IsDBNull(reader.GetOrdinal("WorkFlowHistoryId")) ? "NULL" : reader["WorkFlowHistoryId"]?.ToString() ?? "NULL" }
+                    };
+                    skippedRecords.Add((processedCount, $"Error: {recordEx.Message}", details));
                 }
             }
         }
@@ -188,7 +210,16 @@ public class WorkflowMasterHistoryMigration : MigrationService
                 throw new Exception($"Unexpected error during Workflow Master History Migration at record {processedCount}: {readerEx.Message}", readerEx);
             }
         }
-        
+        // Export migration statistics to Excel
+        var outputPath = "workflow_master_history_migration_stats.xlsx";
+        MigrationStatsExporter.ExportToExcel(
+            outputPath,
+            processedCount,
+            insertedCount,
+            skippedCount,
+            _logger,
+            skippedRecords.Select(r => (r.RecordNo.ToString(), r.Reason)).ToList()
+        );
         return insertedCount;
     }
 }

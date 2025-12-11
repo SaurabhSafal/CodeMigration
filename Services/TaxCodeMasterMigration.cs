@@ -75,20 +75,16 @@ public class TaxCodeMasterMigration : MigrationService
     protected override async Task<int> ExecuteMigrationAsync(SqlConnection sqlConn, NpgsqlConnection pgConn, NpgsqlTransaction? transaction = null)
     {
         migrationLogger.LogInfo("Starting TaxCodeMaster migration...");
-        
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await sqlCmd.ExecuteReaderAsync();
-
         migrationLogger.LogInfo("Query executed. Processing records...");
-        
         using var pgCmd = new NpgsqlCommand(InsertQuery, pgConn);
         if (transaction != null)
         {
             pgCmd.Transaction = transaction;
         }
-
         int totalReadCount = 0;
-
+        var skippedDetails = new List<(string, string)>(); // (record id, reason)
         while (await reader.ReadAsync())
         {
             totalReadCount++;
@@ -96,19 +92,15 @@ public class TaxCodeMasterMigration : MigrationService
             {
                 migrationLogger.LogInfo("Found records! Processing...");
             }
-            
             if (totalReadCount % 100 == 0)
             {
                 migrationLogger.LogInfo($"Processed {totalReadCount} records so far... (Inserted: {migrationLogger.InsertedCount}, Errors: {migrationLogger.ErrorCount})");
             }
-            
             var taxCodeId = reader["TaxCode_Master_Id"];
             var recordId = $"ID={taxCodeId}";
-            
             try
             {
                 pgCmd.Parameters.Clear();
-
                 pgCmd.Parameters.AddWithValue("@tax_code_id", taxCodeId ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@tax_code", reader["TaxCode"] ?? DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@tax_code_name", reader["TaxCodeDesc"] ?? DBNull.Value);
@@ -120,7 +112,6 @@ public class TaxCodeMasterMigration : MigrationService
                 pgCmd.Parameters.AddWithValue("@is_deleted", false);
                 pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value);
                 pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value);
-
                 int result = await pgCmd.ExecuteNonQueryAsync();
                 if (result > 0)
                 {
@@ -130,17 +121,24 @@ public class TaxCodeMasterMigration : MigrationService
             catch (Exception ex)
             {
                 migrationLogger.LogError($"Error migrating TaxCode_Master_Id {taxCodeId}: {ex.Message}", recordId, ex);
+                skippedDetails.Add((recordId, ex.Message));
             }
         }
-
         if (totalReadCount == 0)
         {
             migrationLogger.LogInfo("WARNING: No records found in TBL_TAXCODEMASTER table!");
         }
-
         var summary = migrationLogger.GetSummary();
         _logger.LogInformation($"Tax Code Master Migration Summary: Total: {totalReadCount}, Inserted: {summary.TotalInserted}, Errors: {summary.TotalErrors}");
-
+        // Export migration stats to Excel
+        MigrationStatsExporter.ExportToExcel(
+            "migration_outputs/TaxCodeMasterMigration_Stats.xlsx",
+            totalReadCount,
+            summary.TotalInserted,
+            summary.TotalErrors,
+            _logger,
+            skippedDetails
+        );
         return summary.TotalInserted;
     }
 }

@@ -53,39 +53,54 @@ public class TaxMasterMigration : MigrationService
     {
         using var sqlCmd = new SqlCommand(SelectQuery, sqlConn);
         using var reader = await sqlCmd.ExecuteReaderAsync();
-
         using var pgCmd = new NpgsqlCommand(InsertQuery, pgConn);
         if (transaction != null)
         {
             pgCmd.Transaction = transaction;
         }
-
+        int totalReadCount = 0;
+        var skippedDetails = new List<(string, string)>(); // (record id, reason)
         while (await reader.ReadAsync())
         {
+            totalReadCount++;
             var taxId = reader["TaxId"];
             var recordId = $"ID={taxId}";
-            
-            pgCmd.Parameters.Clear();
-            pgCmd.Parameters.AddWithValue("@tax_master_id", taxId);
-            pgCmd.Parameters.AddWithValue("@tax_name", reader["TaxName"]);
-            pgCmd.Parameters.AddWithValue("@tax_percentage", reader["TaxPer"]);
-            pgCmd.Parameters.AddWithValue("@created_by", 0);
-            pgCmd.Parameters.AddWithValue("@created_date", DateTime.UtcNow);
-            pgCmd.Parameters.AddWithValue("@modified_by", DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@modified_date", DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@is_deleted", false);
-            pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value);
-            pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value);
-            int result = await pgCmd.ExecuteNonQueryAsync();
-            if (result > 0)
+            try
             {
-                migrationLogger.LogInserted(recordId);
+                pgCmd.Parameters.Clear();
+                pgCmd.Parameters.AddWithValue("@tax_master_id", taxId);
+                pgCmd.Parameters.AddWithValue("@tax_name", reader["TaxName"]);
+                pgCmd.Parameters.AddWithValue("@tax_percentage", reader["TaxPer"]);
+                pgCmd.Parameters.AddWithValue("@created_by", 0);
+                pgCmd.Parameters.AddWithValue("@created_date", DateTime.UtcNow);
+                pgCmd.Parameters.AddWithValue("@modified_by", DBNull.Value);
+                pgCmd.Parameters.AddWithValue("@modified_date", DBNull.Value);
+                pgCmd.Parameters.AddWithValue("@is_deleted", false);
+                pgCmd.Parameters.AddWithValue("@deleted_by", DBNull.Value);
+                pgCmd.Parameters.AddWithValue("@deleted_date", DBNull.Value);
+                int result = await pgCmd.ExecuteNonQueryAsync();
+                if (result > 0)
+                {
+                    migrationLogger.LogInserted(recordId);
+                }
+            }
+            catch (Exception ex)
+            {
+                migrationLogger.LogError($"Error migrating TaxId {taxId}: {ex.Message}", recordId, ex);
+                skippedDetails.Add((recordId, ex.Message));
             }
         }
-        
         var summary = migrationLogger.GetSummary();
         _logger.LogInformation($"Tax Master Migration completed. Inserted: {summary.TotalInserted}, Skipped: {summary.TotalSkipped}");
-        
+        // Export migration stats to Excel
+        MigrationStatsExporter.ExportToExcel(
+            "migration_outputs/TaxMasterMigration_Stats.xlsx",
+            totalReadCount,
+            summary.TotalInserted,
+            summary.TotalSkipped,
+            _logger,
+            skippedDetails
+        );
         return summary.TotalInserted;
     }
 }

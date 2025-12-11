@@ -224,17 +224,19 @@ namespace DataMigration.Services
                 {
                     try
                     {
+                        var recordId = $"PBID={row.PBID}";
+                        
                         // Validate required fields
                         if (!row.EVENTID.HasValue || !validEventIds.Contains(row.EVENTID.Value))
                         {
-                            _logger.LogDebug($"Skipping PBID {row.PBID}: Invalid or missing event_id {row.EVENTID}");
+                            _migrationLogger?.LogSkipped($"Invalid or missing event_id {row.EVENTID}", recordId);
                             skippedRecords++;
                             continue;
                         }
 
                         if (!row.SUPPLIER_ID.HasValue || !validSupplierIds.Contains(row.SUPPLIER_ID.Value))
                         {
-                            _logger.LogDebug($"Skipping PBID {row.PBID}: Invalid or missing supplier_id {row.SUPPLIER_ID}");
+                            _migrationLogger?.LogSkipped($"Invalid or missing supplier_id {row.SUPPLIER_ID}", recordId);
                             skippedRecords++;
                             continue;
                         }
@@ -252,7 +254,7 @@ namespace DataMigration.Services
 
                         if (!eventItemId.HasValue)
                         {
-                            _logger.LogDebug($"Skipping PBID {row.PBID}: Could not find valid event_item_id for EventID {row.EVENTID}, PRTRANSID {row.PRTRANSID}");
+                            _migrationLogger?.LogSkipped($"Could not find valid event_item_id for EventID {row.EVENTID}, PRTRANSID {row.PRTRANSID}", recordId);
                             skippedRecords++;
                             continue;
                         }
@@ -261,7 +263,7 @@ namespace DataMigration.Services
                         var lookupKey = (row.EVENTID.Value, row.SUPPLIER_ID.Value);
                         if (!headerNamesLookup.TryGetValue(lookupKey, out var headerNames))
                         {
-                            _logger.LogDebug($"Skipping PBID {row.PBID}: No header names found for EventID {row.EVENTID}, SupplierID {row.SUPPLIER_ID} (no SEQUENCEID=0 record)");
+                            _migrationLogger?.LogSkipped($"No header names found for EventID {row.EVENTID}, SupplierID {row.SUPPLIER_ID} (no SEQUENCEID=0 record)", recordId);
                             skippedRecords++;
                             continue;
                         }
@@ -329,7 +331,8 @@ namespace DataMigration.Services
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError($"Error migrating PBID {row.PBID}: {ex.Message}");
+                        var recordId = $"PBID={row.PBID}";
+                        _migrationLogger?.LogSkipped(ex.Message, recordId);
                         skippedRecords++;
                     }
                 }
@@ -345,7 +348,18 @@ namespace DataMigration.Services
             catch (Exception ex)
             {
                 _logger.LogError($"Error during SupplierEventPriceBidColumns migration: {ex.Message}");
-                throw;
+            }
+
+            // Export migration stats to Excel
+            try
+            {
+                var outputPath = $"SupplierEventPriceBidColumnsMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+                var skippedRecordsList = _migrationLogger?.GetSkippedRecords().Select(x => (x.RecordIdentifier, x.Message)).ToList() ?? new List<(string, string)>();
+                MigrationStatsExporter.ExportToExcel(outputPath, migratedRecords + skippedRecords, migratedRecords, skippedRecords, _logger, skippedRecordsList);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Failed to export migration stats: {ex.Message}");
             }
 
             return migratedRecords;

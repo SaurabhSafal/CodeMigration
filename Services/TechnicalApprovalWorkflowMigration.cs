@@ -103,13 +103,12 @@ ON CONFLICT (technical_approval_workflow_id) DO UPDATE SET
     {
         _migrationLogger = new MigrationLogger(_logger, "technical_approval_workflow");
         _migrationLogger.LogInfo("Starting migration");
-
         _logger.LogInformation("Starting TechnicalApprovalWorkflow migration...");
-        
         int insertedCount = 0;
         int skippedCount = 0;
         int batchNumber = 0;
         var batch = new List<Dictionary<string, object>>();
+        var skippedDetails = new List<(string, string)>(); // (record id, reason)
 
         // Load valid event IDs and user IDs
         var validEventIds = await LoadValidEventIdsAsync(pgConn, transaction);
@@ -134,8 +133,10 @@ ON CONFLICT (technical_approval_workflow_id) DO UPDATE SET
             // Validate required keys
             if (techApprovalHistoryId == DBNull.Value)
             {
-                _logger.LogWarning($"Skipping row: TechApprovalHistory_Id is NULL.");
+                var reason = "TechApprovalHistory_Id is NULL.";
+                _logger.LogWarning($"Skipping row: {reason}");
                 skippedCount++;
+                skippedDetails.Add(("TechApprovalHistory_Id:NULL", reason));
                 continue;
             }
 
@@ -145,8 +146,10 @@ ON CONFLICT (technical_approval_workflow_id) DO UPDATE SET
                 int eventIdValue = Convert.ToInt32(eventId);
                 if (!validEventIds.Contains(eventIdValue))
                 {
-                    _logger.LogWarning($"Skipping TechApprovalHistory_Id {techApprovalHistoryId}: event_id {eventIdValue} not found in event_master.");
+                    var reason = $"event_id {eventIdValue} not found in event_master.";
+                    _logger.LogWarning($"Skipping TechApprovalHistory_Id {techApprovalHistoryId}: {reason}");
                     skippedCount++;
+                    skippedDetails.Add(($"TechApprovalHistory_Id:{techApprovalHistoryId}", reason));
                     continue;
                 }
             }
@@ -154,8 +157,10 @@ ON CONFLICT (technical_approval_workflow_id) DO UPDATE SET
             // Validate user_id is not NULL (required field)
             if (approvalUserId == DBNull.Value)
             {
-                _logger.LogWarning($"Skipping TechApprovalHistory_Id {techApprovalHistoryId}: user_id (ApprovalUserId) is NULL.");
+                var reason = "user_id (ApprovalUserId) is NULL.";
+                _logger.LogWarning($"Skipping TechApprovalHistory_Id {techApprovalHistoryId}: {reason}");
                 skippedCount++;
+                skippedDetails.Add(($"TechApprovalHistory_Id:{techApprovalHistoryId}", reason));
                 continue;
             }
 
@@ -163,8 +168,10 @@ ON CONFLICT (technical_approval_workflow_id) DO UPDATE SET
             int userIdValue = Convert.ToInt32(approvalUserId);
             if (!validUserIds.Contains(userIdValue))
             {
-                _logger.LogWarning($"Skipping TechApprovalHistory_Id {techApprovalHistoryId}: user_id (ApprovalUserId) {userIdValue} not found in users.");
+                var reason = $"user_id (ApprovalUserId) {userIdValue} not found in users.";
+                _logger.LogWarning($"Skipping TechApprovalHistory_Id {techApprovalHistoryId}: {reason}");
                 skippedCount++;
+                skippedDetails.Add(($"TechApprovalHistory_Id:{techApprovalHistoryId}", reason));
                 continue;
             }
 
@@ -204,6 +211,15 @@ ON CONFLICT (technical_approval_workflow_id) DO UPDATE SET
         }
 
         _logger.LogInformation($"TechnicalApprovalWorkflow migration completed. Inserted: {insertedCount}, Skipped: {skippedCount}");
+        // Export migration stats to Excel
+        MigrationStatsExporter.ExportToExcel(
+            "migration_outputs/TechnicalApprovalWorkflowMigration_Stats.xlsx",
+            insertedCount + skippedCount,
+            insertedCount,
+            skippedCount,
+            _logger,
+            skippedDetails
+        );
         return insertedCount;
     }
 

@@ -101,6 +101,7 @@ ON CONFLICT (user_technical_parameter_id) DO UPDATE SET
         
         int insertedCount = 0;
         int skippedCount = 0;
+        var skippedRecordsList = new List<(string RecordId, string Reason)>();
         int batchNumber = 0;
         var batch = new List<Dictionary<string, object>>();
 
@@ -124,8 +125,21 @@ ON CONFLICT (user_technical_parameter_id) DO UPDATE SET
             // Validate required keys
             if (techItemTermId == DBNull.Value)
             {
-                _logger.LogWarning($"Skipping row: TechItemTermId is NULL.");
+                string reason = "TechItemTermId is NULL.";
+                _logger.LogWarning($"Skipping row: {reason}");
                 skippedCount++;
+                skippedRecordsList.Add(("", reason));
+                continue;
+            }
+
+            int techItemTermIdValue = Convert.ToInt32(techItemTermId);
+
+            // Skip duplicates
+            if (batch.Any(r => Convert.ToInt32(r["user_technical_parameter_id"]) == techItemTermIdValue))
+            {
+                string reason = $"Duplicate TechItemTermId {techItemTermIdValue}";
+                skippedCount++;
+                skippedRecordsList.Add((techItemTermIdValue.ToString(), reason));
                 continue;
             }
 
@@ -135,8 +149,10 @@ ON CONFLICT (user_technical_parameter_id) DO UPDATE SET
                 int eventItemIdValue = Convert.ToInt32(pbId);
                 if (!validEventItemIds.Contains(eventItemIdValue))
                 {
-                    _logger.LogWarning($"Skipping TechItemTermId {techItemTermId}: event_item_id (PBID) {eventItemIdValue} not found in event_items.");
+                    string reason = $"event_item_id (PBID) {eventItemIdValue} not found in event_items.";
+                    _logger.LogWarning($"Skipping TechItemTermId {techItemTermId}: {reason}");
                     skippedCount++;
+                    skippedRecordsList.Add((techItemTermIdValue.ToString(), reason));
                     continue;
                 }
             }
@@ -147,8 +163,10 @@ ON CONFLICT (user_technical_parameter_id) DO UPDATE SET
                 int eventIdValue = Convert.ToInt32(eventId);
                 if (!validEventIds.Contains(eventIdValue))
                 {
-                    _logger.LogWarning($"Skipping TechItemTermId {techItemTermId}: event_id {eventIdValue} not found in event_master.");
+                    string reason = $"event_id {eventIdValue} not found in event_master.";
+                    _logger.LogWarning($"Skipping TechItemTermId {techItemTermId}: {reason}");
                     skippedCount++;
+                    skippedRecordsList.Add((techItemTermIdValue.ToString(), reason));
                     continue;
                 }
             }
@@ -194,6 +212,19 @@ ON CONFLICT (user_technical_parameter_id) DO UPDATE SET
             _logger.LogInformation($"Inserting final batch {batchNumber} with {batch.Count} records...");
             insertedCount += await InsertBatchAsync(pgConn, batch, transaction, batchNumber);
         }
+
+        // Export migration statistics to Excel
+        int totalRecords = insertedCount + skippedCount;
+        string outputPath = System.IO.Path.Combine("migration_outputs", $"UserTechnicalParameterMigrationStats_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx");
+        MigrationStatsExporter.ExportToExcel(
+            outputPath,
+            totalRecords,
+            insertedCount,
+            skippedCount,
+            _logger,
+            skippedRecordsList
+        );
+        _logger.LogInformation($"Migration statistics exported to {outputPath}");
 
         _logger.LogInformation($"UserTechnicalParameter migration completed. Inserted: {insertedCount}, Skipped: {skippedCount}");
         return insertedCount;

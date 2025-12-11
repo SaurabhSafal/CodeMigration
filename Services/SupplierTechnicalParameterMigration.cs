@@ -13,6 +13,9 @@ public class SupplierTechnicalParameterMigration : MigrationService
     private const int BATCH_SIZE = 1000;
     private readonly ILogger<SupplierTechnicalParameterMigration> _logger;
     private MigrationLogger? _migrationLogger;
+    
+    // Track skipped records for detailed reporting
+    private List<(string RecordId, string Reason)> _skippedRecords = new List<(string, string)>();
 
     protected override string SelectQuery => @"
         SELECT
@@ -165,6 +168,7 @@ public class SupplierTechnicalParameterMigration : MigrationService
                 {
                     skippedRecords++;
                     _logger.LogWarning("Skipping record - VendorTechItemTermId is NULL");
+                    _skippedRecords.Add((vendorTechItemTermId.ToString(), "VendorTechItemTermId is NULL"));
                     continue;
                 }
 
@@ -174,6 +178,7 @@ public class SupplierTechnicalParameterMigration : MigrationService
                 if (processedIds.Contains(vendorTechItemTermIdValue))
                 {
                     skippedRecords++;
+                    _skippedRecords.Add((vendorTechItemTermId.ToString(), "Duplicate record"));
                     continue;
                 }
 
@@ -182,6 +187,7 @@ public class SupplierTechnicalParameterMigration : MigrationService
                 {
                     skippedRecords++;
                     _logger.LogWarning($"Skipping VendorTechItemTermId {vendorTechItemTermIdValue} - user_technical_parameter_id is NULL");
+                    _skippedRecords.Add((vendorTechItemTermId.ToString(), "user_technical_parameter_id is NULL"));
                     continue;
                 }
 
@@ -192,6 +198,7 @@ public class SupplierTechnicalParameterMigration : MigrationService
                 {
                     skippedRecords++;
                     _logger.LogWarning($"Skipping VendorTechItemTermId {vendorTechItemTermIdValue} - Invalid user_technical_parameter_id: {techItemTermIdValue}");
+                    _skippedRecords.Add((vendorTechItemTermId.ToString(), $"Invalid user_technical_parameter_id: {techItemTermIdValue}"));
                     continue;
                 }
 
@@ -200,6 +207,7 @@ public class SupplierTechnicalParameterMigration : MigrationService
                 {
                     skippedRecords++;
                     _logger.LogWarning($"Skipping VendorTechItemTermId {vendorTechItemTermIdValue} - supplier_id is NULL");
+                    _skippedRecords.Add((vendorTechItemTermId.ToString(), "supplier_id is NULL"));
                     continue;
                 }
 
@@ -210,6 +218,7 @@ public class SupplierTechnicalParameterMigration : MigrationService
                 {
                     skippedRecords++;
                     _logger.LogWarning($"Skipping VendorTechItemTermId {vendorTechItemTermIdValue} - Invalid supplier_id: {vendorIdValue}");
+                    _skippedRecords.Add((vendorTechItemTermId.ToString(), $"Invalid supplier_id: {vendorIdValue}"));
                     continue;
                 }
 
@@ -253,6 +262,16 @@ public class SupplierTechnicalParameterMigration : MigrationService
             }
 
             _logger.LogInformation($"Supplier Technical Parameter migration completed. Total: {totalRecords}, Migrated: {migratedRecords}, Skipped: {skippedRecords}");
+
+            // Export migration statistics with skipped record details
+            MigrationStatsExporter.ExportToExcel(
+                "SupplierTechnicalParameter_migration_stats.xlsx",
+                totalRecords,
+                migratedRecords,
+                skippedRecords,
+                _logger,
+                _skippedRecords
+            );
 
             return migratedRecords;
         }
