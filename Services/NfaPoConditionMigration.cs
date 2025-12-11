@@ -45,6 +45,7 @@ namespace DataMigration.Services
 
             var migratedRecords = 0;
             var skippedRecords = 0;
+            var skippedDetails = new List<(string RecordId, string Reason)>();
 
             try
             {
@@ -134,46 +135,46 @@ namespace DataMigration.Services
                         {
                             _logger.LogWarning($"Skipping AwardEventPoConditionId {record.AwardEventPoConditionId}: AwardEventItemId is null");
                             skippedRecords++;
+                            skippedDetails.Add((record.AwardEventPoConditionId.ToString(), "AwardEventItemId is null"));
                             continue;
                         }
-
                         if (!validNfaLineIds.Contains(record.AwardEventItemId.Value))
                         {
                             _logger.LogWarning($"Skipping AwardEventPoConditionId {record.AwardEventPoConditionId}: AwardEventItemId={record.AwardEventItemId} not found in nfa_line");
                             skippedRecords++;
+                            skippedDetails.Add((record.AwardEventPoConditionId.ToString(), $"AwardEventItemId={record.AwardEventItemId} not found in nfa_line"));
                             continue;
                         }
-
                         // Validate po_condition_id (REQUIRED - NOT NULL, FK)
                         if (!record.PoConditionId.HasValue)
                         {
                             _logger.LogWarning($"Skipping AwardEventPoConditionId {record.AwardEventPoConditionId}: PoConditionId is null");
                             skippedRecords++;
+                            skippedDetails.Add((record.AwardEventPoConditionId.ToString(), "PoConditionId is null"));
                             continue;
                         }
-
                         if (!validPoConditionIds.Contains(record.PoConditionId.Value))
                         {
                             _logger.LogWarning($"Skipping AwardEventPoConditionId {record.AwardEventPoConditionId}: PoConditionId={record.PoConditionId} not found in po_condition_master");
                             skippedRecords++;
+                            skippedDetails.Add((record.AwardEventPoConditionId.ToString(), $"PoConditionId={record.PoConditionId} not found in po_condition_master"));
                             continue;
                         }
-
                         // Parse and validate Percentage (REQUIRED - NOT NULL)
                         if (string.IsNullOrWhiteSpace(record.Percentage))
                         {
                             _logger.LogWarning($"Skipping AwardEventPoConditionId {record.AwardEventPoConditionId}: Percentage is null/empty");
                             skippedRecords++;
+                            skippedDetails.Add((record.AwardEventPoConditionId.ToString(), "Percentage is null/empty"));
                             continue;
                         }
-
                         if (!decimal.TryParse(record.Percentage, out var value))
                         {
                             _logger.LogWarning($"Skipping AwardEventPoConditionId {record.AwardEventPoConditionId}: Percentage='{record.Percentage}' is not a valid number");
                             skippedRecords++;
+                            skippedDetails.Add((record.AwardEventPoConditionId.ToString(), $"Percentage='{record.Percentage}' is not a valid number"));
                             continue;
                         }
-
                         var targetRow = new TargetRow
                         {
                             NfaPoConditionId = record.AwardEventPoConditionId,
@@ -181,10 +182,8 @@ namespace DataMigration.Services
                             PoConditionId = record.PoConditionId.Value,
                             Value = value
                         };
-
                         insertBatch.Add(targetRow);
                         migratedRecords++;
-
                         if (insertBatch.Count >= batchSize)
                         {
                             await ExecuteInsertBatch(pgConnection, insertBatch);
@@ -195,6 +194,7 @@ namespace DataMigration.Services
                     {
                         _logger.LogError($"Error processing AwardEventPoConditionId {record.AwardEventPoConditionId}: {ex.Message}");
                         skippedRecords++;
+                        skippedDetails.Add((record.AwardEventPoConditionId.ToString(), $"Exception: {ex.Message}"));
                     }
                 }
 
@@ -204,6 +204,16 @@ namespace DataMigration.Services
                 }
 
                 _logger.LogInformation($"Migration completed. Migrated: {migratedRecords}, Skipped: {skippedRecords}");
+
+                // Export migration stats to Excel
+                MigrationStatsExporter.ExportToExcel(
+                    "NfaPoConditionMigrationStats.xlsx",
+                    sourceData.Count,
+                    migratedRecords,
+                    skippedRecords,
+                    _logger,
+                    skippedDetails
+                );
             }
             catch (Exception ex)
             {

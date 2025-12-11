@@ -1,6 +1,7 @@
 using ClosedXML.Excel;
 using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
+using System.IO;
 
 namespace DataMigration.Services
 {
@@ -17,6 +18,16 @@ namespace DataMigration.Services
         /// <param name="skippedRecords">Optional list of skipped records (RecordId, Reason).</param>
         public static void ExportToExcel(string filePath, int totalCount, int insertedCount, int skippedCount, ILogger logger, List<(string RecordId, string Reason)>? skippedRecords = null)
         {
+            // Ensure migration_outputs folder exists
+            var outputDir = Path.Combine(Directory.GetCurrentDirectory(), "migration_outputs");
+            if (!Directory.Exists(outputDir))
+            {
+                Directory.CreateDirectory(outputDir);
+            }
+            // Use only filename if filePath is not rooted
+            var fileName = Path.GetFileName(filePath);
+            var fullPath = Path.Combine(outputDir, fileName);
+
             using var workbook = new XLWorkbook();
             var worksheet = workbook.Worksheets.Add("MigrationStats");
             worksheet.Cell(1, 1).Value = "Metric";
@@ -42,8 +53,8 @@ namespace DataMigration.Services
                 }
             }
 
-            workbook.SaveAs(filePath);
-            logger.LogInformation($"Migration stats exported to Excel: {filePath}");
+            workbook.SaveAs(fullPath);
+            logger.LogInformation($"Migration stats exported to Excel: {fullPath}");
         }
     }
 }

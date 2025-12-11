@@ -151,6 +151,7 @@ public class NfaLotChargesMigration : MigrationService
         int totalRecords = 0;
         int migratedRecords = 0;
         int skippedRecords = 0;
+        var skippedDetails = new List<(string RecordId, string Reason)>();
 
         try
         {
@@ -179,15 +180,16 @@ public class NfaLotChargesMigration : MigrationService
                 {
                     skippedRecords++;
                     _logger.LogWarning("Skipping record - AwardEventLotChargeId is NULL");
+                    skippedDetails.Add(("NULL", "AwardEventLotChargeId is NULL"));
                     continue;
                 }
-
                 int awardEventLotChargesIdValue = Convert.ToInt32(awardEventLotChargesId);
 
                 // Skip duplicates
                 if (processedIds.Contains(awardEventLotChargesIdValue))
                 {
                     skippedRecords++;
+                    skippedDetails.Add((awardEventLotChargesIdValue.ToString(), "Duplicate AwardEventLotChargeId"));
                     continue;
                 }
 
@@ -197,6 +199,7 @@ public class NfaLotChargesMigration : MigrationService
                 {
                     skippedRecords++;
                     _logger.LogWarning($"Skipping record {awardEventLotChargesIdValue} - AWARDEVENTMAINID is NULL");
+                    skippedDetails.Add((awardEventLotChargesIdValue.ToString(), "AWARDEVENTMAINID is NULL"));
                     continue;
                 }
 
@@ -207,6 +210,7 @@ public class NfaLotChargesMigration : MigrationService
                 {
                     skippedRecords++;
                     _logger.LogWarning($"Skipping record {awardEventLotChargesIdValue} - nfa_header_id {awardEventMainIdValue} does not exist in nfa_header table");
+                    skippedDetails.Add((awardEventLotChargesIdValue.ToString(), $"nfa_header_id {awardEventMainIdValue} does not exist"));
                     continue;
                 }
 
@@ -219,6 +223,7 @@ public class NfaLotChargesMigration : MigrationService
                 {
                     skippedRecords++;
                     _logger.LogWarning($"Skipping record {awardEventLotChargesIdValue} - PB_BuyerChargesId is NULL or 0");
+                    skippedDetails.Add((awardEventLotChargesIdValue.ToString(), "PB_BuyerChargesId is NULL or 0"));
                     continue;
                 }
                 
@@ -233,6 +238,7 @@ public class NfaLotChargesMigration : MigrationService
                 {
                     skippedRecords++;
                     _logger.LogWarning($"Skipping record {awardEventLotChargesIdValue} - Could not find price_bid_charges_id for PB_BuyerChargesId: {pbBuyerChargesIdValue}");
+                    skippedDetails.Add((awardEventLotChargesIdValue.ToString(), $"Could not find price_bid_charges_id for PB_BuyerChargesId: {pbBuyerChargesIdValue}"));
                     continue;
                 }
 
@@ -294,6 +300,16 @@ public class NfaLotChargesMigration : MigrationService
             }
 
             _logger.LogInformation($"NFA Lot Charges migration completed. Total: {totalRecords}, Migrated: {migratedRecords}, Skipped: {skippedRecords}");
+
+            // Export migration stats to Excel
+            DataMigration.Services.MigrationStatsExporter.ExportToExcel(
+                "NfaLotChargesMigrationStats.xlsx",
+                totalRecords,
+                migratedRecords,
+                skippedRecords,
+                _logger,
+                skippedDetails
+            );
 
             return migratedRecords;
         }

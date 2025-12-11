@@ -280,6 +280,8 @@ public class NfaLineMigration : MigrationService
         int migratedRecords = 0;
         int skippedRecords = 0;
 
+        var skippedDetails = new List<(string RecordId, string Reason)>();
+
         try
         {
             // Load PO Condition arrays for each AwardEventItem
@@ -309,15 +311,16 @@ public class NfaLineMigration : MigrationService
                 {
                     skippedRecords++;
                     _logger.LogWarning("Skipping record - AWARDEVENTITEM is NULL");
+                    skippedDetails.Add(("NULL", "AWARDEVENTITEM is NULL"));
                     continue;
                 }
-
                 int awardEventItemValue = Convert.ToInt32(awardEventItem);
 
                 // Skip duplicates
                 if (processedIds.Contains(awardEventItemValue))
                 {
                     skippedRecords++;
+                    skippedDetails.Add((awardEventItemValue.ToString(), "Duplicate AWARDEVENTITEM"));
                     continue;
                 }
 
@@ -327,6 +330,7 @@ public class NfaLineMigration : MigrationService
                 {
                     skippedRecords++;
                     _logger.LogWarning($"Skipping record {awardEventItemValue} - AWARDEVENTMAINID is NULL");
+                    skippedDetails.Add((awardEventItemValue.ToString(), "AWARDEVENTMAINID is NULL"));
                     continue;
                 }
 
@@ -337,6 +341,7 @@ public class NfaLineMigration : MigrationService
                 {
                     skippedRecords++;
                     _logger.LogWarning($"Skipping record {awardEventItemValue} - nfa_header_id {awardEventMainIdValue} does not exist in nfa_header table");
+                    skippedDetails.Add((awardEventItemValue.ToString(), $"nfa_header_id {awardEventMainIdValue} does not exist"));
                     continue;
                 }
 
@@ -400,6 +405,7 @@ public class NfaLineMigration : MigrationService
                 {
                     skippedRecords++;
                     _logger.LogWarning($"Skipping record {awardEventItemValue} - Could not find uom_id for Uomid: {sourceUomId} or UOM code: {reader["UOM"]}");
+                    skippedDetails.Add((awardEventItemValue.ToString(), $"Could not find uom_id for Uomid: {sourceUomId} or UOM code: {reader["UOM"]}"));
                     continue;
                 }
 
@@ -463,6 +469,16 @@ public class NfaLineMigration : MigrationService
             }
 
             _logger.LogInformation($"NFA Line migration completed. Total: {totalRecords}, Migrated: {migratedRecords}, Skipped: {skippedRecords}");
+
+            // Export migration stats to Excel
+            DataMigration.Services.MigrationStatsExporter.ExportToExcel(
+                "NfaLineMigrationStats.xlsx",
+                totalRecords,
+                migratedRecords,
+                skippedRecords,
+                _logger,
+                skippedDetails
+            );
 
             return migratedRecords;
         }
