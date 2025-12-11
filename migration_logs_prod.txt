@@ -1,0 +1,323 @@
+Building...
+info: DataMigration.Services.BinaryAttachmentBackgroundService[0]
+      BinaryAttachmentBackgroundService started
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://localhost:5290
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/saurabh/Navikaran/CodeMigration
+warn: Microsoft.AspNetCore.HttpsPolicy.HttpsRedirectionMiddleware[3]
+      Failed to determine the https port for redirect.
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Starting database truncation (excluding migration tables)...
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Found 129 tables to truncate
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: arc_attachements
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: arc_attachements_history
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: arc_cart
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: arc_clarification
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: arc_header
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: arc_header_history
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: arc_lines
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: arc_lines_history
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: arc_plant
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: arc_plant_history
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: arc_workflow
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: arc_workflow_history
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: assigned_event_vendor
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: auction_min_max_target_price
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: auction_min_max_target_price_history
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: company_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: condition_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: country_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: currency_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: dynamic_table_labels
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: email_template
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: erp_currency_exchange_rate
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: erp_pr_lines
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: event_boq_items
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: event_collaboration
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: event_communication_attachment
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: event_communication_receiver
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: event_communication_sender
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: event_freeze_currency
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: event_items
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: event_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: event_price_bid_columns
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: event_publish
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: event_schedule
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: event_schedule_history
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: event_setting
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: event_setting_history
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: event_supplier_line_item
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: event_supplier_line_item_history
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: event_supplier_price_bid
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: event_supplier_price_bid_history
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: file_validation_rules
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: incoterm_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: material_group_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: material_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: nfa_attachments
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: nfa_boq_items
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: nfa_clarification
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: nfa_header
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: nfa_line
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: nfa_lot_charges
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: nfa_po_condition
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: nfa_workflow
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: payment_term_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: permission_group
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: permission_group_template
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: permissions
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: permissions_template
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: plant_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: po_boq_items
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: po_cart
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: po_condition_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: po_doc_type_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: po_header
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: po_line
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: pr_attachments
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: pr_boq_items
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: price_bid_charges_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: purchase_group_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: purchase_organization_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: refresh_tokens
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: role_permissions
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: roles
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: sap_history_data
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: sap_po_push_log
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: sourcelist_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_audit_logs
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_bank_deails
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_event_price_bid_columns
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_groupmaster
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_inactive
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_other_contact
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_payment_incoterm
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_price_bid_document
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_price_bid_lot_charges
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_price_bid_lot_charges_history
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_price_bid_lot_price
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_price_bid_lot_price_history
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_price_bid_non_pricing
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_price_bid_non_pricing_history
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_price_boq_items
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_price_boq_items_history
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_technical_parameter
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_term_deviations
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: supplier_terms
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: tax_code_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: tax_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: technical_approval_score
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: technical_approval_score_history
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: technical_approval_workflow
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: technical_documents
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: technical_parameter_template
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: term_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: term_template_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: type_of_category_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: uom_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: user_audit_action
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: user_audit_actions
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: user_audit_logs
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: user_company_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: user_otp
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: user_permissions
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: user_plant_material_group_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: user_plant_purchase_group_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: user_price_bid_lot_charges
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: user_price_bid_non_pricing
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: user_roles
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: user_technical_parameter
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: user_term
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: users
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: valuation_type_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: workflow_amount
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: workflow_amount_history
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: workflow_approval_user
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: workflow_approval_user_history
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: workflow_history
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: workflow_master
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Truncated table: workflow_master_history
+info: DataMigration.Services.DatabaseTruncateService[0]
+      Database truncation completed. 129 out of 129 tables truncated successfully.
+info: DataMigration.Services.SeedDataService[0]
+      Starting seed data migration...
+info: DataMigration.Services.SeedDataService[0]
+      Truncating seed tables before inserting data...
+info: DataMigration.Services.SeedDataService[0]
+      Truncated table: country_master
+info: DataMigration.Services.SeedDataService[0]
+      Truncated table: company_master
+info: DataMigration.Services.SeedDataService[0]
+      Ensured roles table exists
+info: DataMigration.Services.SeedDataService[0]
+      Seeding roles table...
+info: DataMigration.Services.SeedDataService[0]
+      Seeded 5 records into roles table
+info: DataMigration.Services.SeedDataService[0]
+      Ensured permission_group table exists
+info: DataMigration.Services.SeedDataService[0]
+      Seeding permission_group table...
+info: DataMigration.Services.SeedDataService[0]
+      Seeded 8 records into permission_group table
+info: DataMigration.Services.SeedDataService[0]
+      Ensured permissions table exists
+info: DataMigration.Services.SeedDataService[0]
+      Seeding permissions table...
+info: DataMigration.Services.SeedDataService[0]
+      Seeded 98 records into permissions table
+info: DataMigration.Services.SeedDataService[0]
+      Ensured permissions_template table exists
+info: DataMigration.Services.SeedDataService[0]
+      Seeding permissions_template table...
+info: DataMigration.Services.SeedDataService[0]
+      Seeded 98 records into permissions_template table
+info: DataMigration.Services.SeedDataService[0]
+      Ensured user_audit_action table exists
+info: DataMigration.Services.SeedDataService[0]
+      Seeding user_audit_action table...
+info: DataMigration.Services.SeedDataService[0]
+      Seeded 51 records into user_audit_action table
+info: DataMigration.Services.SeedDataService[0]
+      Seed data migration completed. 260 records inserted into 5 table(s): roles, permission_group, permissions, permissions_template, user_audit_action
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+info: DataMigration.Services.BinaryAttachmentBackgroundService[0]
+      BinaryAttachmentBackgroundService is stopping
+info: DataMigration.Services.BinaryAttachmentBackgroundService[0]
+      BinaryAttachmentBackgroundService stopped

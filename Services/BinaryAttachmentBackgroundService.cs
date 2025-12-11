@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.SignalR;
@@ -83,6 +84,14 @@ namespace DataMigration.Services
         public BinaryMigrationStatus? GetJobStatus(string jobId)
         {
             return _jobStatuses.TryGetValue(jobId, out var status) ? status : null;
+        }
+
+        /// <summary>
+        /// Get all job statuses
+        /// </summary>
+        public List<BinaryMigrationStatus> GetAllJobStatuses()
+        {
+            return _jobStatuses.Values.ToList();
         }
 
         /// <summary>

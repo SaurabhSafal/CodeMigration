@@ -212,6 +212,7 @@ public class PRAttachmentMigration : MigrationService
             var createTempSql = @"
                 CREATE TEMP TABLE IF NOT EXISTS tmp_pr_attachments_meta (
                     pr_attachment_id bigint,
+                    pr_header_id bigint,
                     erp_pr_lines_id bigint,
                     upload_path text,
                     file_name text,
@@ -262,7 +263,7 @@ public class PRAttachmentMigration : MigrationService
             // Begin binary import
             _logger.LogInformation("Initiating BeginBinaryImport...");
             await using (var importer = pgConn.BeginBinaryImport(
-                "COPY tmp_pr_attachments_meta (pr_attachment_id, erp_pr_lines_id, upload_path, file_name, remarks, is_header_doc, pr_attachment_extensions, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) FROM STDIN (FORMAT BINARY)"))
+                "COPY tmp_pr_attachments_meta (pr_attachment_id, pr_header_id, erp_pr_lines_id, upload_path, file_name, remarks, is_header_doc, pr_attachment_extensions, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date) FROM STDIN (FORMAT BINARY)"))
             {
                 _logger.LogInformation("Binary COPY import started. Reading first record from SQL Server...");
                 
@@ -278,8 +279,8 @@ public class PRAttachmentMigration : MigrationService
                         if (rowCount == 0)
                             _logger.LogInformation($"First record ID: {prAttachmentId}");
 
-                        // skip PRID (1)
-                        if (!reader.IsDBNull(1)) _ = reader.GetValue(1);
+                        // Get PRID (pr_header_id)
+                        var prHeaderId = reader.IsDBNull(1) ? (long?)null : Convert.ToInt64(reader.GetValue(1));
                         var uploadPath = reader.IsDBNull(2) ? null : reader.GetString(2);
                         var fileName = reader.IsDBNull(3) ? null : reader.GetString(3);
                         // skip uploadedById (4)
@@ -299,6 +300,7 @@ public class PRAttachmentMigration : MigrationService
 
                         importer.StartRow();
                         importer.Write(prAttachmentId, NpgsqlDbType.Bigint);
+                        importer.Write(prHeaderId, NpgsqlDbType.Bigint);
                         importer.Write(prTransId, NpgsqlDbType.Bigint);
                         importer.Write(uploadPath, NpgsqlDbType.Text);
                         importer.Write(fileName, NpgsqlDbType.Text);
@@ -335,13 +337,6 @@ public class PRAttachmentMigration : MigrationService
                         _logger.LogError(ex, $"Error processing record at row {rowCount + 1}");
                         throw;
                     }
-
-                    // commit importer periodically by completing and reopening every COPY_BATCH_ROWS rows to avoid huge transactions
-                    if (rowCount % COPY_BATCH_ROWS == 0)
-                    {
-                        await importer.CompleteAsync(cancellationToken);
-                        _logger.LogInformation($"Batch commit: Copied {rowCount:N0} metadata rows so far");
-                    }
                 }
 
                 // finalize
@@ -364,11 +359,12 @@ public class PRAttachmentMigration : MigrationService
         _logger.LogInformation("Phase 2: Merging metadata from temp table into pr_attachments via single SQL statement");
 
         var mergeSql = @"
-            INSERT INTO pr_attachments (pr_attachment_id, erp_pr_lines_id, upload_path, file_name, remarks, is_header_doc, pr_attachment_extensions, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date)
-            SELECT pr_attachment_id, erp_pr_lines_id, upload_path, file_name, remarks, is_header_doc, pr_attachment_extensions, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date
+            INSERT INTO pr_attachments (pr_attachment_id, pr_header_id, erp_pr_lines_id, upload_path, file_name, remarks, is_header_doc, pr_attachment_extensions, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date)
+            SELECT pr_attachment_id, pr_header_id, erp_pr_lines_id, upload_path, file_name, remarks, is_header_doc, pr_attachment_extensions, created_by, created_date, modified_by, modified_date, is_deleted, deleted_by, deleted_date
             FROM tmp_pr_attachments_meta
             ON CONFLICT (pr_attachment_id)
             DO UPDATE SET
+                pr_header_id = EXCLUDED.pr_header_id,
                 erp_pr_lines_id = EXCLUDED.erp_pr_lines_id,
                 upload_path = EXCLUDED.upload_path,
                 file_name = EXCLUDED.file_name,
